@@ -11,14 +11,66 @@ button{background:#8155d9;border:0;cursor:pointer}button:hover{background:#9b73e
 .track{padding:14px;border-bottom:1px solid #38394b;display:flex;align-items:center;gap:12px}
 .track audio{max-width:250px;width:100%}.muted{color:#a7a7bc;font-size:14px}
 .result{padding:12px 0}a{color:#ba9dff}.error{color:#ffa0a0}
-</style></head><body><main>
+.tabs{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.tab{background:#292b40}.tab.active{background:#8155d9}.tabpane{display:none}.tabpane.active{display:block}textarea,select{font:inherit;border-radius:9px;padding:11px;border:1px solid #55576e;background:#141524;color:white}textarea{width:100%;box-sizing:border-box;min-height:105px;resize:vertical}label{display:block;margin:10px 0 5px;font-size:14px;color:#c2c1d4}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.field input,.field select{box-sizing:border-box;width:100%}.status{border:1px solid #393b52;border-radius:12px;padding:12px;margin:12px 0}.good{color:#82d6a6}.warning{color:#e6bb72}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><main>
 <header><div><h1>🎵 Music Channel Automation</h1><p class="muted">Local song library and YouTube compilation creator</p></div><span id="health"></span></header>
+<nav class="tabs"><button class="tab active" data-tab="generate">Music Generation</button><button class="tab" data-tab="library">Song Library & Video Creator</button></nav>
+<div class="tabpane active" id="pane-generate">
+<section class="panel"><h2>AI Music Generation - ACE-Step 1.5</h2>
+<div id="aceStatus" class="status muted">Checking local ACE-Step connection...</div>
+<p class="muted">Run the ACE-Step API on your PC (default http://127.0.0.1:8001). No paid API required.</p>
+<form id="generateForm">
+<div class="grid">
+<div class="field"><label for="genre">Genre / style</label><select id="genre"><option>Phonk</option><option selected>Lo-fi</option><option>Synthwave</option><option>Ambient</option><option>Electronic</option><option>Jazz</option><option>Rock</option><option>Hip-hop</option><option>Custom</option></select></div>
+<div class="field"><label for="count">Number of songs</label><input id="count" type="number" min="1" max="10" value="10"></div>
+<div class="field"><label for="duration">Target length per song (seconds)</label><input id="duration" type="number" min="30" max="600" value="360"></div>
+<div class="field"><label for="vocalMode">Song type</label><select id="vocalMode"><option value="instrumental" selected>Instrumental</option><option value="vocals">AI vocals</option></select></div>
+</div>
+<label for="prefix">Track title prefix</label><input id="prefix" type="text" value="AI Mix Track" maxlength="90" style="width:100%;box-sizing:border-box">
+<label for="musicPrompt">Music prompt</label><textarea id="musicPrompt" maxlength="1000" placeholder="Describe instruments, energy, mood, tempo and atmosphere..." required>Warm melodies, atmospheric synth textures, steady drums, immersive instrumental sound, rich production, evolving arrangement, original music.</textarea>
+<p class="muted">10 songs x 360 seconds targets around 60 minutes. Actual AI output durations may differ.</p>
+<button id="generateBtn" type="submit">Generate Songs</button> <button type="button" id="checkAce" class="tab">Check connection</button>
+</form></section>
+<section class="panel"><h2>Generation queue</h2><div id="generationJobs" class="muted">No batches yet.</div></section>
+</div><div class="tabpane" id="pane-library">
 <section class="panel"><h2>1. Import songs</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Song title (optional)"><button>Import song</button></form><p id="uploadStatus" class="muted"></p></section>
 <section class="panel"><h2>2. Choose tracks (in playback order)</h2><p class="muted">Select the songs below. Your chosen order is the order used in the compilation.</p><div id="songs">Loading…</div></section>
 <section class="panel"><h2>3. Render compilation</h2><div class="row"><input type="text" id="title" value="One Hour Music Mix"><button id="render">Create MP4</button></div><p class="muted">The output length is the sum of selected tracks; it does not automatically fill one hour.</p><div id="job"></div></section>
 <section class="panel"><h2>4. Finished videos</h2><div id="videos">Loading…</div></section>
-</main><script>
+</div></main><script>
 const $=id=>document.getElementById(id);
+document.querySelectorAll('.tab[data-tab]').forEach(button=>{
+ button.onclick=()=>{
+  document.querySelectorAll('.tab[data-tab]').forEach(b=>b.classList.toggle('active',b===button));
+  document.querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+button.dataset.tab));
+  if(button.dataset.tab==='library')refresh();
+ };
+});
+async function checkAce(){
+ try{const j=await read('/api/generation/connection');$('aceStatus').className='status '+(j.connected?'good':'warning');$('aceStatus').textContent=j.connected?'ACE-Step connected at '+j.url:'ACE-Step not connected - '+(j.error||'start local API server');}
+ catch(e){$('aceStatus').textContent='Connection test failed: '+e.message}
+}
+$('checkAce').onclick=checkAce;
+$('generateForm').onsubmit=async e=>{
+ e.preventDefault();$('generateBtn').disabled=true;
+ try{
+  const settings={genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value};
+  const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});
+  const j=await r.json();if(!r.ok)throw Error(j.error||'Generation rejected');
+  await showJobs();
+ }catch(e){alert(e.message)}
+ finally{$('generateBtn').disabled=false}
+};
+async function showJobs(){
+ try{
+ const jobs=await read('/api/generation/jobs');
+ $('generationJobs').innerHTML=jobs.length?jobs.map(j=>'<div class="status"><strong>Batch '+esc(j.id.slice(0,8))+'</strong> - '+esc(j.status)+
+ '<p class="muted">Track '+j.current+' of '+j.count+' - Completed '+j.completed+' - '+esc(j.progress||'')+'</p>'+
+ (j.failures.length?'<p class="error">'+j.failures.length+' failed: '+esc(j.failures.map(f=>'#'+f.song+' '+f.error).join('; '))+'</p>':'')+
+ (j.results.length?'<p class="good">'+j.results.length+' songs saved to Song Library.</p>':'')+'</div>').join(''):'No generation batches yet.';
+ }catch(e){$('generationJobs').textContent=e.message}
+}
+checkAce();showJobs();setInterval(showJobs,5000);
+
 let library=[];
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dur=n=>Math.floor(n/60)+':'+String(Math.floor(n%60)).padStart(2,'0');
