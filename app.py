@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 from pathlib import Path
 from datetime import datetime
 import sqlite3, subprocess, shutil, uuid, threading, json
+from music_generation import check_connection, generate_one, base_url
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -145,9 +146,99 @@ def create_compilation():
     threading.Thread(target=render_job, args=(task_id, ids, title), daemon=True).start()
     return jsonify(task_id=task_id), 202
 
+generation_jobs = {}
+generation_lock = threading.Lock()
+
+@app.get("/api/generation/connection")
+def generation_connection():
+    try:
+        check_connection()
+        return jsonify(connected=True, url=base_url())
+    except Exception as error:
+        return jsonify(connected=False, error=str(error), url=base_url() if "Invalid" not in str(error) else "invalid")
+
+@app.get("/api/generation/jobs")
+def generation_job_list():
+    return jsonify(list(generation_jobs.values())[-30:][::-1])
+
+@app.get("/api/generation/jobs/<job_id>")
+def generation_job_status(job_id):
+    if job_id not in generation_jobs:
+        return jsonify(error="Job not found"), 404
+    return jsonify(generation_jobs[job_id])
+
+def generation_worker(job_id, payload):
+    job = generation_jobs[job_id]
+    try:
+        for index in range(payload["count"]):
+            job["current"] = index + 1
+            job["progress"] = "Starting song " + str(index + 1)
+            song_id = uuid.uuid4().hex
+            filename = song_id + ".mp3"
+            path = SONGS / filename
+            genre = payload["genre"].strip()
+            base_prompt = payload["prompt"].strip()
+            description = ", ".join(part for part in (genre, base_prompt) if part)
+            title = f"{payload['title_prefix']} {index+1:02d}"
+            try:
+                generate_one(description, payload["duration"], payload["instrumental"], path,
+                             on_progress=lambda message: job.update(progress=message))
+                duration = probe(path)
+                if duration <= 0:
+                    raise ValueError("Generated file has no audio.")
+                with db() as conn:
+                    conn.execute("INSERT INTO songs VALUES (?, ?, ?, ?, ?)",
+                                 (song_id, title, filename, duration, datetime.now().isoformat()))
+                job["completed"] += 1
+                job["results"].append({"id": song_id, "title": title, "duration": duration})
+            except Exception as error:
+                path.unlink(missing_ok=True)
+                job["failures"].append({"song": index + 1, "error": str(error)[:400]})
+                job["progress"] = "Song failed; continuing with next"
+        job["status"] = "done" if not job["failures"] else ("partial" if job["completed"] else "error")
+        job["progress"] = "Batch finished"
+    except Exception as error:
+        job["status"] = "error"
+        job["progress"] = str(error)
+    finally:
+        generation_lock.release()
+
 @app.post("/api/generate")
 def generate():
-    return jsonify(error="Local ACE-Step adapter is not configured in this GitHub version. Import audio first; AI generation will be added next."), 501
+    payload = request.get_json(silent=True) or {}
+    try:
+        count = int(payload.get("count", 10))
+        duration = int(payload.get("duration", 360))
+    except (TypeError, ValueError):
+        return jsonify(error="Count and duration must be integers."), 400
+    if not 1 <= count <= 10 or not 30 <= duration <= 600:
+        return jsonify(error="Select 1-10 songs and 30-600 seconds per song."), 400
+    genre = str(payload.get("genre") or "Lo-fi").strip()[:80]
+    prompt = str(payload.get("prompt") or "").strip()[:1000]
+    title_prefix = str(payload.get("title_prefix") or genre + " Track").strip()[:90]
+    if not prompt:
+        return jsonify(error="Enter a musical description."), 400
+    if not shutil.which("ffprobe"):
+        return jsonify(error="Install FFmpeg and ffprobe first."), 503
+    try:
+        check_connection()
+    except Exception as error:
+        return jsonify(error="ACE-Step is not connected: " + str(error)), 503
+    if not generation_lock.acquire(blocking=False):
+        return jsonify(error="A generation batch is already running."), 409
+    job_id = uuid.uuid4().hex
+    generation_jobs[job_id] = {"id": job_id, "status": "running", "current": 0,
+                                "count": count, "completed": 0, "results": [], "failures": [],
+                                "progress": "Queued", "started": datetime.now().isoformat()}
+    settings = {"count": count, "duration": duration, "genre": genre,
+                "prompt": prompt, "title_prefix": title_prefix,
+                "instrumental": bool(payload.get("instrumental", True))}
+    try:
+        threading.Thread(target=generation_worker, args=(job_id, settings), daemon=True).start()
+    except Exception:
+        generation_lock.release()
+        raise
+    return jsonify(job_id=job_id), 202
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5050, debug=False)
