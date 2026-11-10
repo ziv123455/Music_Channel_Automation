@@ -69,7 +69,7 @@ async function showJobs(){
  (j.results.length?'<p class="good">'+j.results.length+' songs saved to Song Library.</p>':'')+'</div>').join(''):'No generation batches yet.';
  }catch(e){$('generationJobs').textContent=e.message}
 }
-checkAce();showJobs();setInterval(showJobs,5000);
+
 
 let library=[];
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -86,4 +86,5 @@ $('render').onclick=async()=>{let ids=[...document.querySelectorAll('.trackPick:
 try{let r=await fetch('/api/compilations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_ids:ids,title:$('title').value})}),j=await r.json();if(!r.ok)throw Error(j.error);$('job').textContent='Rendering…';let timer=setInterval(async()=>{try{let t=await read('/api/tasks/'+j.task_id);$('job').textContent=t.status+' — '+(t.progress||t.error||'');if(t.status!=='queued'&&t.status!=='running'){clearInterval(timer);await refresh()}}catch(e){clearInterval(timer);$('job').textContent=e.message}},2500)}catch(e){$('job').textContent=e.message}};
 read('/api/health').then(h=>$('health').textContent=h.ffmpeg&&h.ffprobe?'✓ FFmpeg ready':'⚠ Install FFmpeg');
 refresh().catch(e=>$('songs').textContent=e.message);
+checkAce();showJobs();setInterval(showJobs,5000);
 </script></body></html>
