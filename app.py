@@ -270,7 +270,7 @@ def generate():
         return jsonify(error="A generation batch is already running."), 409
     job_id = uuid.uuid4().hex
     generation_jobs[job_id] = {"id": job_id, "status": "running", "current": 0,
-                                "count": count, "completed": 0, "results": [], "failures": [],
+                                "count": count, "account_id": account_id, "completed": 0, "results": [], "failures": [],
                                 "progress": "Queued", "started": datetime.now().isoformat()}
     settings = {"count": count, "duration": duration, "genre": genre,
                 "prompt": prompt, "title_prefix": title_prefix,
