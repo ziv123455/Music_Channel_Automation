@@ -1,11 +1,16 @@
-"""Local ACE-Step 1.5 native asynchronous API integration."""
+"""Resilient local ACE-Step 1.5 asynchronous REST client."""
 import json
 import os
 import time
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
+
 import requests
 
 DEFAULT_URL = "http://127.0.0.1:8001"
+POLL_INTERVAL_SECONDS = 5
+MAX_POLL_SECONDS = 3600
+RECOVERABLE = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
 def base_url():
     url = os.getenv("ACESTEP_API_URL", DEFAULT_URL).rstrip("/")
@@ -16,6 +21,7 @@ def base_url():
 
 def session():
     client = requests.Session()
+    client.headers["Connection"] = "close"
     token = os.getenv("ACESTEP_API_KEY", "")
     if token:
         client.headers["Authorization"] = "Bearer " + token
@@ -27,8 +33,42 @@ def check_connection():
         response.raise_for_status()
         return response.json()
 
+def _post_json(url, payload, timeout=30):
+    # A fresh connection per request avoids stale keep-alive sockets after model loading.
+    with session() as client:
+        response = client.post(url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        result = response.json()
+        if result.get("code", 200) != 200:
+            raise RuntimeError("ACE-Step error: " + str(result.get("error") or result)[:300])
+        return result
+
+def _fetch_audio(url, output):
+    temporary = Path(str(output) + ".part")
+    for attempt in range(5):
+        try:
+            with session() as client:
+                with client.get(url, stream=True, timeout=(10, 180)) as response:
+                    response.raise_for_status()
+                    with open(temporary, "wb") as stream:
+                        for chunk in response.iter_content(1024 * 256):
+                            if chunk:
+                                stream.write(chunk)
+            if temporary.stat().st_size < 1024:
+                raise RuntimeError("ACE-Step returned an empty audio file.")
+            temporary.replace(output)
+            return
+        except RECOVERABLE:
+            temporary.unlink(missing_ok=True)
+            if attempt == 4:
+                raise RuntimeError("Audio download failed after 5 connection attempts.")
+            time.sleep(min(5 * (attempt + 1), 20))
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+
 def generate_one(description, duration, instrumental, path, on_progress=None):
-    """Submit one task, poll it and download the first audio result."""
+    """Submit once, keep its task ID, recover connection loss during polling."""
     base = base_url()
     payload = {
         "prompt": description,
@@ -37,49 +77,66 @@ def generate_one(description, duration, instrumental, path, on_progress=None):
         "lyrics": "[Instrumental]" if instrumental else "",
         "thinking": True,
         "audio_format": "mp3",
+        "batch_size": 1,
     }
-    with session() as client:
-        response = client.post(base + "/release_task", json=payload, timeout=60)
-        response.raise_for_status()
-        body = response.json()
-        data = body.get("data") or {}
-        task_id = data.get("task_id") if isinstance(data, dict) else None
-        if not task_id:
-            raise RuntimeError(f"ACE-Step did not return task_id: {str(body)[:300]}")
-        deadline = time.monotonic() + 3600
-        while time.monotonic() < deadline:
+    try:
+        body = _post_json(base + "/release_task", payload, timeout=60)
+    except RECOVERABLE as error:
+        raise RuntimeError(
+            "Connection lost while submitting the generation task. "
+            "ACE-Step may still be processing it; do not submit again until checking its server logs. "
+            + str(error)
+        ) from error
+    data = body.get("data") or {}
+    task_id = data.get("task_id") if isinstance(data, dict) else None
+    if not task_id:
+        raise RuntimeError("ACE-Step did not return a task ID: " + str(body)[:300])
+    if on_progress:
+        on_progress("ACE-Step task submitted: " + str(task_id))
+    deadline = time.monotonic() + MAX_POLL_SECONDS
+    connection_errors = 0
+    while time.monotonic() < deadline:
+        time.sleep(POLL_INTERVAL_SECONDS)
+        try:
+            result_body = _post_json(base + "/query_result", {"task_id_list": [task_id]}, timeout=30)
+            connection_errors = 0
+        except RECOVERABLE as error:
+            connection_errors += 1
             if on_progress:
-                on_progress("Generating music on ACE-Step")
-            time.sleep(5)
-            result_response = client.post(base + "/query_result", json={"task_id_list": [task_id]}, timeout=30)
-            result_response.raise_for_status()
-            result_body = result_response.json()
-            results = result_body.get("data") or []
-            entry = results[0] if results else None
-            if not isinstance(entry, dict):
-                continue
-            state = int(entry.get("status", 0))
-            if state == 2:
-                raise RuntimeError("ACE-Step generation failed: " + str(entry.get("error") or entry.get("result") or "Unknown reason")[:300])
-            if state != 1:
-                continue
-            details = entry.get("result") or "[]"
-            files = json.loads(details) if isinstance(details, str) else details
-            if not isinstance(files, list) or not files or not files[0].get("file"):
-                raise RuntimeError("ACE-Step completed without an audio file.")
-            relative = files[0]["file"]
-            audio_url = urljoin(base + "/", relative)
-            parsed_url = urlparse(audio_url)
-            parsed_base = urlparse(base)
-            if (parsed_url.hostname, parsed_url.port) != (parsed_base.hostname, parsed_base.port):
-                raise RuntimeError("ACE-Step returned an unsafe audio URL.")
-            with client.get(audio_url, stream=True, timeout=120) as download:
-                download.raise_for_status()
-                with open(path, "wb") as output:
-                    for chunk in download.iter_content(1024 * 256):
-                        if chunk:
-                            output.write(chunk)
-            if path.stat().st_size < 1024:
-                raise RuntimeError("Downloaded audio is empty or invalid.")
-            return
-        raise TimeoutError("ACE-Step generation exceeded one hour.")
+                on_progress("ACE-Step connection interrupted; recovering task " + str(task_id)
+                            + " (attempt " + str(connection_errors) + "/20)")
+            if connection_errors >= 20:
+                raise RuntimeError(
+                    "ACE-Step connection remained unavailable. Existing task ID: "
+                    + str(task_id) + ". Inspect/restart the ACE-Step process; do not regenerate blindly."
+                ) from error
+            time.sleep(min(3 * connection_errors, 15))
+            continue
+        results = result_body.get("data") or []
+        entry = next((r for r in results if isinstance(r, dict) and r.get("task_id") == task_id), None)
+        if entry is None:
+            if on_progress:
+                on_progress("Waiting for ACE-Step task " + str(task_id))
+            continue
+        state = int(entry.get("status", 0))
+        if state == 2:
+            raise RuntimeError("ACE-Step task " + str(task_id) + " failed: "
+                               + str(entry.get("error") or entry.get("result") or "Unknown error")[:300])
+        if state != 1:
+            if on_progress:
+                on_progress("Generating music (task " + str(task_id) + ")")
+            continue
+        details = entry.get("result") or "[]"
+        files = json.loads(details) if isinstance(details, str) else details
+        if not isinstance(files, list) or not files or not files[0].get("file"):
+            raise RuntimeError("ACE-Step task " + str(task_id) + " returned no audio.")
+        audio_url = urljoin(base + "/", files[0]["file"])
+        target = urlparse(audio_url)
+        source = urlparse(base)
+        if (target.scheme, target.hostname, target.port) != (source.scheme, source.hostname, source.port):
+            raise RuntimeError("Unsafe audio URL returned by ACE-Step.")
+        if on_progress:
+            on_progress("Downloading completed audio for task " + str(task_id))
+        _fetch_audio(audio_url, path)
+        return
+    raise TimeoutError("Timed out waiting for ACE-Step task " + str(task_id))
