@@ -2,89 +2,164 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Music Channel Automation</title>
 <style>
-body{margin:0;background:#11121d;color:#f2f1f8;font:16px system-ui,Segoe UI,sans-serif}main{max-width:1050px;margin:45px auto;padding:0 20px}
-header{display:flex;justify-content:space-between;align-items:center}h1{font-size:30px;margin:0 0 10px}h2{font-size:19px}
-.panel{background:#1e2030;padding:24px;border-radius:17px;margin:20px 0;border:1px solid #32354b}
-button,input{font:inherit;border-radius:9px;padding:11px;border:1px solid #55576e;background:#141524;color:white}
-button{background:#8155d9;border:0;cursor:pointer}button:hover{background:#9b73ef}
-.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}input[type=text]{flex:1;min-width:150px}
-.track{padding:14px;border-bottom:1px solid #38394b;display:flex;align-items:center;gap:12px}
-.track audio{max-width:250px;width:100%}.muted{color:#a7a7bc;font-size:14px}
-.result{padding:12px 0}a{color:#ba9dff}.error{color:#ffa0a0}
-.tabs{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}.tab{background:#292b40}.tab.active{background:#8155d9}.tabpane{display:none}.tabpane.active{display:block}textarea,select{font:inherit;border-radius:9px;padding:11px;border:1px solid #55576e;background:#141524;color:white}textarea{width:100%;box-sizing:border-box;min-height:105px;resize:vertical}label{display:block;margin:10px 0 5px;font-size:14px;color:#c2c1d4}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.field input,.field select{box-sizing:border-box;width:100%}.status{border:1px solid #393b52;border-radius:12px;padding:12px;margin:12px 0}.good{color:#82d6a6}.warning{color:#e6bb72}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><main>
-<header><div><h1>🎵 Music Channel Automation</h1><p class="muted">Local song library and YouTube compilation creator</p></div><span id="health"></span></header>
-<nav class="tabs"><button class="tab active" data-tab="generate">Music Generation</button><button class="tab" data-tab="library">Song Library & Video Creator</button></nav>
+:root{font-family:system-ui,Segoe UI,sans-serif;color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;background:#10121f;color:#f2f0fa;font-size:15px}main{max-width:1100px;margin:35px auto;padding:0 20px}
+h1{font-size:27px;margin:0 0 4px}h2{font-size:20px;margin:0 0 14px}h3{font-size:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:20px}.muted{color:#acadc6;font-size:13px}
+.panel{background:#1e2032;border:1px solid #37394f;border-radius:15px;padding:23px;margin:19px 0}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0}.tab{background:#2b2d43}.tab.active{background:#8453dc}.tabpane{display:none}.tabpane.active{display:block}
+button,input,select,textarea{font:inherit;color:#f5f3fb;border:1px solid #4e506b;border-radius:8px;padding:10px;background:#141625}
+button{background:#8051d5;border:0;cursor:pointer}button:disabled{opacity:.5;cursor:wait}button:hover:not(:disabled){filter:brightness(1.15)}
+label{display:block;font-size:13px;color:#bfc0d4;margin:12px 0 5px}textarea{width:100%;min-height:100px;resize:vertical}
+input[type=text],input[type=email],input[type=number],select{width:100%}input[type=checkbox]{width:17px;height:17px}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.row>input[type=text]{flex:1;min-width:220px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:13px}
+.status{border:1px solid #3a3e59;padding:13px;border-radius:10px;margin:10px 0}.good{color:#85e1ac}.warning{color:#e9c578}.error{color:#ff9c9c}
+.track{padding:13px 0;border-bottom:1px solid #414159;display:flex;align-items:center;gap:12px}.track strong{display:block}
+.track audio{width:260px;max-width:100%}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-width:520px;aspect-ratio:16/9;object-fit:cover;border-radius:10px;border:1px solid #454762}
+.pill{display:inline-block;background:#30344d;border-radius:10px;padding:5px 9px;font-size:12px}
+@media(max-width:650px){.track{flex-wrap:wrap}.track audio{width:100%}header{align-items:flex-start;flex-direction:column}}
+</style></head><body><main>
+<header>
+<div><h1>🎵 Music Channel Automation</h1><div class="muted">Local AI songs, YouTube mixes and channel manager</div></div>
+<div style="min-width:240px"><label for="channelSwitcher">Active channel</label><select id="channelSwitcher"></select><div id="health" class="muted"></div></div>
+</header>
+<nav class="tabs">
+<button class="tab active" data-tab="generate">Music Generation</button>
+<button class="tab" data-tab="library">Song Library & Compilations</button>
+<button class="tab" data-tab="thumbnail">Thumbnail Studio</button>
+<button class="tab" data-tab="accounts">Account Manager</button>
+</nav>
+
 <div class="tabpane active" id="pane-generate">
-<section class="panel"><h2>AI Music Generation - ACE-Step 1.5</h2>
-<div id="aceStatus" class="status muted">Checking local ACE-Step connection...</div>
-<p class="muted">Run the ACE-Step API on your PC (default http://127.0.0.1:8001). No paid API required.</p>
+<section class="panel">
+<h2>AI Music Generation</h2>
+<div class="grid"><div id="aceStatus" class="status muted">Checking ACE-Step...</div><div id="ollamaStatus" class="status muted">Checking Ollama...</div></div>
+<div class="muted">ACE-Step at 127.0.0.1:8001 generates audio. Optional Ollama at 127.0.0.1:11434 generates a unique creative prompt for every song.</div>
 <form id="generateForm">
 <div class="grid">
-<div class="field"><label for="genre">Genre / style</label><select id="genre"><option>Phonk</option><option selected>Lo-fi</option><option>Synthwave</option><option>Ambient</option><option>Electronic</option><option>Jazz</option><option>Rock</option><option>Hip-hop</option><option>Custom</option></select></div>
-<div class="field"><label for="count">Number of songs</label><input id="count" type="number" min="1" max="10" value="10"></div>
-<div class="field"><label for="duration">Target length per song (seconds)</label><input id="duration" type="number" min="30" max="600" value="360"></div>
-<div class="field"><label for="vocalMode">Song type</label><select id="vocalMode"><option value="instrumental" selected>Instrumental</option><option value="vocals">AI vocals</option></select></div>
+<div><label for="genre">Genre / style</label><input id="genre" value="Classical" maxlength="80"></div>
+<div><label for="count">Number of songs</label><input id="count" type="number" min="1" max="10" value="10"></div>
+<div><label for="duration">Target song length (seconds)</label><input id="duration" type="number" min="30" max="600" value="360"></div>
+<div><label for="vocalMode">Music type</label><select id="vocalMode"><option value="instrumental">Instrumental</option><option value="vocals">Vocals</option></select></div>
 </div>
-<label for="prefix">Track title prefix</label><input id="prefix" type="text" value="AI Mix Track" maxlength="90" style="width:100%;box-sizing:border-box">
-<label for="musicPrompt">Music prompt</label><textarea id="musicPrompt" maxlength="1000" placeholder="Describe instruments, energy, mood, tempo and atmosphere..." required>Warm melodies, atmospheric synth textures, steady drums, immersive instrumental sound, rich production, evolving arrangement, original music.</textarea>
-<p class="muted">10 songs x 360 seconds targets around 60 minutes. Actual AI output durations may differ.</p>
-<button id="generateBtn" type="submit">Generate Songs</button> <button type="button" id="checkAce" class="tab">Check connection</button>
+<label for="prefix">Song title prefix</label><input id="prefix" maxlength="90" value="Classical Piece">
+<label for="musicPrompt">Creative direction for the compilation</label>
+<textarea id="musicPrompt" maxlength="1000">Original peaceful classical instrumental music, expressive strings, intimate piano, elegant orchestral harmonies, changing melodies and a calming concert-hall atmosphere.</textarea>
+<div class="row">
+<label><input id="autoPrompts" type="checkbox" checked> Use free Ollama AI to write a different prompt for every song</label>
+<label><input id="autoCompilation" type="checkbox" checked> Automatically create a compilation after the batch finishes</label>
+</div>
+<label for="compilationTitle">Compilation title</label><input id="compilationTitle" maxlength="100" value="1 Hour of Peaceful Classical Music">
+<div class="muted" style="margin:9px 0">Uses the currently selected thumbnail from Thumbnail Studio, if any. Audio duration depends on the generated tracks; it is not guaranteed to be exactly 60 minutes.</div>
+<div class="row"><button id="generateBtn" type="submit">Generate Song Batch</button><button type="button" id="checkConnections" class="tab">Check AI connections</button><button type="button" id="previewPrompt" class="tab">Preview one AI prompt</button></div>
+<div id="promptPreview" class="status muted" style="display:none"></div>
 </form></section>
-<section class="panel"><h2>Generation queue</h2><div id="generationJobs" class="muted">No batches yet.</div></section>
-</div><div class="tabpane" id="pane-library">
-<section class="panel"><h2>1. Import songs</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Song title (optional)"><button>Import song</button></form><p id="uploadStatus" class="muted"></p></section>
-<section class="panel"><h2>2. Choose tracks (in playback order)</h2><p class="muted">Select the songs below. Your chosen order is the order used in the compilation.</p><div id="songs">Loading…</div></section>
-<section class="panel"><h2>3. Render compilation</h2><div class="row"><input type="text" id="title" value="One Hour Music Mix"><button id="render">Create MP4</button></div><p class="muted">The output length is the sum of selected tracks; it does not automatically fill one hour.</p><div id="job"></div></section>
-<section class="panel"><h2>4. Finished videos</h2><div id="videos">Loading…</div></section>
-</div></main><script>
-const $=id=>document.getElementById(id);
-document.querySelectorAll('.tab[data-tab]').forEach(button=>{
- button.onclick=()=>{
-  document.querySelectorAll('.tab[data-tab]').forEach(b=>b.classList.toggle('active',b===button));
-  document.querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+button.dataset.tab));
-  if(button.dataset.tab==='library')refresh();
- };
-});
-async function checkAce(){
- try{const j=await read('/api/generation/connection');$('aceStatus').className='status '+(j.connected?'good':'warning');$('aceStatus').textContent=j.connected?'ACE-Step connected at '+j.url:'ACE-Step not connected - '+(j.error||'start local API server');}
- catch(e){$('aceStatus').textContent='Connection test failed: '+e.message}
+<section class="panel"><h2>Generation queue</h2><div id="generationJobs" class="muted">No generation batches yet.</div></section>
+</div>
+
+<div class="tabpane" id="pane-library">
+<section class="panel"><h2>Import songs for this channel</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Optional song title"><button>Import audio</button></form><p id="uploadStatus" class="muted"></p></section>
+<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks in playback order. Song prompts are saved with each generated song.</p><div id="songs">Loading...</div><div id="selectionStats" class="muted"></div></section>
+<section class="panel"><h2>Create video compilation</h2><div class="row"><input type="text" id="title" value="One Hour Music Mix"><button id="render">Render MP4</button></div><p class="muted">Uses the selected thumbnail (if generated) as full-video artwork. Full song durations are joined; the system does not silently repeat songs or fill with silence.</p><div id="job"></div></section>
+<section class="panel"><h2>Finished videos</h2><div id="videos">No videos yet.</div></section>
+</div>
+
+<div class="tabpane" id="pane-thumbnail">
+<section class="panel"><h2>Free custom thumbnail studio</h2>
+<p class="muted">Make a unique 1280×720 PNG from a color theme and your own optional background image. No subscriptions or API credits. This is a template-based image designer, not AI image synthesis.</p>
+<form id="thumbnailForm">
+<div class="grid">
+<div><label for="thumbTitle">Thumbnail headline</label><input id="thumbTitle" value="Peaceful Classical Music" maxlength="120"></div>
+<div><label for="palette">Color design</label><select id="palette"><option value="gold">Classical Gold</option><option value="midnight">Midnight Purple</option><option value="forest">Forest Green</option><option value="rose">Rose</option><option value="blue">Ocean Blue</option></select></div>
+</div>
+<label for="thumbBackground">Optional custom background (PNG/JPG, maximum 8 MB)</label><input type="file" id="thumbBackground" accept="image/png,image/jpeg,image/webp">
+<p><button type="submit">Generate Thumbnail</button></p>
+</form>
+<div id="thumbnailStatus" class="muted"></div>
+<img id="thumbPreview" class="thumb" style="display:none" alt="Thumbnail preview">
+<div id="thumbLink" class="muted"></div>
+</section></div>
+
+<div class="tabpane" id="pane-accounts">
+<section class="panel"><h2>Channel accounts</h2><p class="muted">These are local channel profiles. Associating an email does not sign in to YouTube or grant upload access.</p><div id="accountList"></div></section>
+<section class="panel"><h2>Add a channel</h2>
+<form id="accountForm">
+<div class="grid"><div><label for="accountName">Channel name</label><input id="accountName" required placeholder="Classical Dreamscapes"></div>
+<div><label for="accountEmail">Associated email</label><input id="accountEmail" type="email" required placeholder="channel@example.com"></div>
+<div><label for="accountGenre">Music genre</label><input id="accountGenre" value="Classical" required></div></div>
+<label for="accountDescription">Channel's creative direction</label><textarea id="accountDescription" placeholder="Calm original classical pieces with piano and orchestra..."></textarea>
+<button type="submit">Add Channel</button><span id="accountStatus" class="muted"></span>
+</form></section>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id), api='/api';
+let accounts=[], activeAccount=localStorage.getItem('music_channel_active')||'default', savedThumbnail='';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padStart(2,'0');
+async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
+async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
+function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail='';$('thumbPreview').style.display='none';$('thumbLink').textContent='';refresh();showJobs()}
+async function loadAccounts(){
+ accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
+ renderAccounts();applyAccount();
 }
-$('checkAce').onclick=checkAce;
+function renderAccounts(){
+ $('accountList').innerHTML=accounts.map(a=>'<div class="status"><strong>'+esc(a.name)+'</strong> <span class="pill">'+esc(a.genre)+'</span><div class="muted">'+esc(a.email||'No email')+'</div><div class="muted">'+esc(a.description||'No creative direction yet')+'</div><button class="tab" data-switch="'+esc(a.id)+'">Switch to channel</button></div>').join('');
+ document.querySelectorAll('[data-switch]').forEach(b=>b.onclick=()=>{activeAccount=b.dataset.switch;applyAccount()});
+}
+$('channelSwitcher').onchange=e=>{activeAccount=e.target.value;applyAccount()};
+document.querySelectorAll('.tab[data-tab]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('.tab[data-tab]').forEach(x=>x.classList.toggle('active',x===b));
+ document.querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+b.dataset.tab));
+ if(b.dataset.tab==='library')refresh();
+});
+async function connections(){
+ try{const j=await read('/generation/connection');$('aceStatus').className='status '+(j.connected?'good':'warning');$('aceStatus').textContent=j.connected?'✓ ACE-Step connected':'ACE-Step disconnected: '+esc(j.error)}catch(e){$('aceStatus').textContent=e.message}
+ try{const j=await read('/prompt-ai/status');$('ollamaStatus').className='status '+(j.connected&&j.model_ready?'good':'warning');$('ollamaStatus').textContent=j.connected?(j.model_ready?'✓ Ollama ready: '+j.model:'Ollama running; install model '+j.model):'Ollama offline - install and run local model'}catch(e){$('ollamaStatus').textContent=e.message}
+}
+$('checkConnections').onclick=connections;
+$('previewPrompt').onclick=async()=>{const box=$('promptPreview');box.style.display='block';box.textContent='Generating preview...';try{let j=await post('/prompt-ai/preview',{account_id:activeAccount,theme:$('musicPrompt').value});box.textContent=j.prompt}catch(e){box.textContent=e.message}};
+$('accountForm').onsubmit=async e=>{
+ e.preventDefault();try{const j=await post('/accounts',{name:$('accountName').value,email:$('accountEmail').value,genre:$('accountGenre').value,description:$('accountDescription').value});activeAccount=j.id;await loadAccounts();$('accountStatus').textContent='Channel added!';e.target.reset()}catch(err){$('accountStatus').textContent=err.message}
+};
 $('generateForm').onsubmit=async e=>{
  e.preventDefault();$('generateBtn').disabled=true;
- try{
-  const settings={genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value};
-  const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});
-  const j=await r.json();if(!r.ok)throw Error(j.error||'Generation rejected');
-  await showJobs();
- }catch(e){alert(e.message)}
+ try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value,thumbnail:savedThumbnail});await showJobs()}catch(e){alert(e.message)}
  finally{$('generateBtn').disabled=false}
 };
 async function showJobs(){
- try{
- const jobs=await read('/api/generation/jobs');
- $('generationJobs').innerHTML=jobs.length?jobs.map(j=>'<div class="status"><strong>Batch '+esc(j.id.slice(0,8))+'</strong> - '+esc(j.status)+
- '<p class="muted">Track '+j.current+' of '+j.count+' - Completed '+j.completed+' - '+esc(j.progress||'')+'</p>'+
- (j.failures.length?'<p class="error">'+j.failures.length+' failed: '+esc(j.failures.map(f=>'#'+f.song+' '+f.error).join('; '))+'</p>':'')+
- (j.results.length?'<p class="good">'+j.results.length+' songs saved to Song Library.</p>':'')+'</div>').join(''):'No generation batches yet.';
+ try{const jobs=(await read('/generation/jobs')).filter(j=>j.account_id===activeAccount||!j.account_id);
+ $('generationJobs').innerHTML=jobs.length?jobs.map(j=>'<div class="status"><strong>Batch '+esc(j.id.slice(0,8))+'</strong> · '+esc(j.status)+'<p class="muted">Song '+j.current+' / '+j.count+' — '+j.completed+' completed — '+esc(j.progress||'')+'</p>'+(j.results.length?'<p class="good">'+j.results.length+' songs saved</p>':'')+(j.failures.length?'<p class="error">'+esc(j.failures.map(f=>'#'+f.song+': '+f.error).join('; '))+'</p>':'')+(j.compilation_task_id?'<p>Video task: '+esc(j.compilation_task_id.slice(0,8))+'</p>':'')+'</div>').join(''):'No batches for this channel.';
  }catch(e){$('generationJobs').textContent=e.message}
 }
-
-
-let library=[];
-const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const dur=n=>Math.floor(n/60)+':'+String(Math.floor(n%60)).padStart(2,'0');
-async function read(url){let r=await fetch(url),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j;}
 async function refresh(){
- library=await read('/api/songs');
- $('songs').innerHTML=library.length?library.map(s=>'<div class="track"><input type="checkbox" class="trackPick" value="'+s.id+'"><div style="flex:1"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div></div><audio controls preload="none" src="/api/song/'+s.id+'"></audio></div>').join(''):'No songs yet. Import an audio file above.';
- const videos=await read('/api/compilations');
- $('videos').innerHTML=videos.length?videos.map(v=>'<div class="result"><strong>'+esc(v.title)+'</strong> · <a href="/api/video/'+v.id+'">Download MP4</a><pre class="muted">'+esc(v.chapters||'')+'</pre></div>').join(''):'No rendered compilations yet.';
+ if(!current())return;
+ const lib=await read('/songs?account_id='+encodeURIComponent(activeAccount));
+ $('songs').innerHTML=lib.length?lib.map(s=>'<div class="track"><input type="checkbox" class="trackPick" value="'+esc(s.id)+'"><div style="flex:1"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'')+'</div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(activeAccount)+'"></audio></div>').join(''):'No songs for this channel yet.';
+ document.querySelectorAll('.trackPick').forEach(i=>i.onchange=updateSelection);
+ updateSelection();
+ const vids=await read('/compilations?account_id='+encodeURIComponent(activeAccount));
+ $('videos').innerHTML=vids.length?vids.map(v=>'<div class="status"><strong>'+esc(v.title)+'</strong> · <a href="/api/video/'+encodeURIComponent(v.id)+'?account_id='+encodeURIComponent(activeAccount)+'">Download MP4</a><pre>'+esc(v.chapters||'')+'</pre></div>').join(''):'No rendered videos yet.';
 }
-$('upload').onsubmit=async e=>{e.preventDefault();$('uploadStatus').textContent='Importing…';try{let r=await fetch('/api/upload',{method:'POST',body:new FormData(e.target)}),j=await r.json();if(!r.ok)throw Error(j.error);$('uploadStatus').textContent='Imported '+j.title;e.target.reset();await refresh()}catch(err){$('uploadStatus').textContent=err.message}};
-$('render').onclick=async()=>{let ids=[...document.querySelectorAll('.trackPick:checked')].map(e=>e.value);if(!ids.length){alert('Select at least one song');return}
-try{let r=await fetch('/api/compilations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({track_ids:ids,title:$('title').value})}),j=await r.json();if(!r.ok)throw Error(j.error);$('job').textContent='Rendering…';let timer=setInterval(async()=>{try{let t=await read('/api/tasks/'+j.task_id);$('job').textContent=t.status+' — '+(t.progress||t.error||'');if(t.status!=='queued'&&t.status!=='running'){clearInterval(timer);await refresh()}}catch(e){clearInterval(timer);$('job').textContent=e.message}},2500)}catch(e){$('job').textContent=e.message}};
-read('/api/health').then(h=>$('health').textContent=h.ffmpeg&&h.ffprobe?'✓ FFmpeg ready':'⚠ Install FFmpeg');
-refresh().catch(e=>$('songs').textContent=e.message);
-checkAce();showJobs();setInterval(showJobs,5000);
+function updateSelection(){const ids=new Set([...document.querySelectorAll('.trackPick:checked')].map(x=>x.value));$('selectionStats').textContent=ids.size+' tracks selected';}
+$('upload').onsubmit=async e=>{
+ e.preventDefault();const fd=new FormData(e.target);fd.set('account_id',activeAccount);$('uploadStatus').textContent='Importing...';
+ try{const r=await fetch('/api/upload',{method:'POST',body:fd}),j=await r.json();if(!r.ok)throw Error(j.error);$('uploadStatus').textContent='Imported '+j.title;e.target.reset();await refresh()}catch(e){$('uploadStatus').textContent=e.message}
+};
+$('render').onclick=async()=>{
+ const ids=[...document.querySelectorAll('.trackPick:checked')].map(e=>e.value);if(!ids.length){alert('Select tracks');return}
+ try{const j=await post('/compilations',{track_ids:ids,title:$('title').value,account_id:activeAccount,thumbnail:savedThumbnail});$('job').textContent='Rendering...';let timer=setInterval(async()=>{try{const s=await read('/tasks/'+j.task_id);$('job').textContent=s.status+' — '+(s.progress||s.error||'');if(!['running','queued'].includes(s.status)){clearInterval(timer);refresh()}}catch(e){clearInterval(timer);$('job').textContent=e.message}},2500)}catch(e){$('job').textContent=e.message}
+};
+$('thumbnailForm').onsubmit=async e=>{
+ e.preventDefault();const data=new FormData();data.set('account_id',activeAccount);data.set('title',$('thumbTitle').value);data.set('palette',$('palette').value);
+ if($('thumbBackground').files[0])data.set('background',$('thumbBackground').files[0]);
+ $('thumbnailStatus').textContent='Generating thumbnail...';
+ try{const r=await fetch('/api/thumbnails',{method:'POST',body:data}),j=await r.json();if(!r.ok)throw Error(j.error);savedThumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('thumbnailStatus').textContent='Thumbnail generated and selected for this channel session.';$('thumbLink').innerHTML='<a href="'+j.url+'" download>Download PNG</a>'}catch(err){$('thumbnailStatus').textContent=err.message}
+};
+read('/health').then(h=>$('health').textContent=h.ffmpeg&&h.ffprobe?'✓ FFmpeg ready':'Install FFmpeg');
+loadAccounts().catch(e=>alert('Failed to load accounts: '+e.message));connections();setInterval(showJobs,5000);
 </script></body></html>
