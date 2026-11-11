@@ -42,7 +42,10 @@ def initialize():
             columns = {r["name"] for r in cn.execute("PRAGMA table_info(" + table + ")")}
             if "account_id" not in columns:
                 cn.execute("ALTER TABLE " + table + " ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default'")
-        song_columns = {r["name"] for r in cn.execute("PRAGMA table_info(songs)")}
+        account_columns = {r["name"] for r in cn.execute("PRAGMA table_info(accounts)")}
+        if "thumbnail" not in account_columns:
+            cn.execute("ALTER TABLE accounts ADD COLUMN thumbnail TEXT NOT NULL DEFAULT ''")
+        song_columns = {r["name"] for r in cn.execute("PRAGMA table_info(songs)") }
         if "prompt" not in song_columns:
             cn.execute("ALTER TABLE songs ADD COLUMN prompt TEXT NOT NULL DEFAULT ''")
         comp_columns = {r["name"] for r in cn.execute("PRAGMA table_info(compilations)")}
@@ -125,7 +128,7 @@ def compose_music_prompt(account, base_prompt, index, prior):
     try:
         res = requests.post(OLLAMA_URL + "/api/generate",
             json={"model": OLLAMA_MODEL, "prompt": instructions, "stream": False,
-                  "options": {"temperature": 0.95, "num_predict": 160}}, timeout=180)
+                  "options": {"temperature": 0.95, "num_predict": 160}, "keep_alive": 0}, timeout=180)
         res.raise_for_status()
         result = (res.json().get("response") or "").strip().strip('"')[:1000]
         if len(result) < 30:
@@ -231,6 +234,8 @@ def thumbnail():
         except Exception:
             return jsonify(error="Invalid image upload"),400
     name = create_thumbnail(account, title, account["genre"], palette, background)
+    with connect() as cn:
+        cn.execute("UPDATE accounts SET thumbnail=? WHERE id=?", (name, account_id))
     return jsonify(filename=name, url="/api/thumbnail/"+name)
 
 @bp.get("/thumbnail/<filename>")
