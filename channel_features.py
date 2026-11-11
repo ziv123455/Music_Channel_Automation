@@ -36,7 +36,7 @@ def initialize():
             created TEXT NOT NULL)""")
         existing = cn.execute("SELECT id FROM accounts ORDER BY created LIMIT 1").fetchone()
         if not existing:
-            cn.execute("INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+            cn.execute("INSERT INTO accounts (id,name,email,genre,description,created) VALUES (?, ?, ?, ?, ?, ?)",
                        ("default", "Default Channel", "", "Lo-fi", "", datetime.now().isoformat()))
         for table in ("songs", "compilations"):
             columns = {r["name"] for r in cn.execute("PRAGMA table_info(" + table + ")")}
@@ -75,7 +75,7 @@ def add_account():
         return jsonify(error="Enter a channel name and valid email."), 400
     account_id = uuid.uuid4().hex
     with connect() as cn:
-        cn.execute("INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+        cn.execute("INSERT INTO accounts (id,name,email,genre,description,created) VALUES (?, ?, ?, ?, ?, ?)",
                    (account_id, name, email, genre, description, datetime.now().isoformat()))
     return jsonify(id=account_id, name=name), 201
 
