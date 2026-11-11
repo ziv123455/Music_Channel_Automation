@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import sqlite3, subprocess, shutil, uuid, threading, json
 from music_generation import check_connection, generate_one, base_url
+from channel_features import bp as channel_blueprint, initialize as initialize_channels, valid_account, compose_music_prompt, connect as channel_db, THUMBS
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -21,6 +22,8 @@ def db():
 with db() as conn:
     conn.execute("CREATE TABLE IF NOT EXISTS songs (id TEXT PRIMARY KEY, title TEXT NOT NULL, filename TEXT NOT NULL, duration REAL NOT NULL, created TEXT NOT NULL)")
     conn.execute("CREATE TABLE IF NOT EXISTS compilations (id TEXT PRIMARY KEY, title TEXT NOT NULL, filename TEXT NOT NULL, chapters TEXT, created TEXT NOT NULL)")
+initialize_channels()
+app.register_blueprint(channel_blueprint)
 
 def probe(path):
     output = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], text=True)
@@ -36,14 +39,18 @@ def health():
 
 @app.get("/api/songs")
 def songs():
+    account_id = request.args.get("account_id", "default")
+    if not valid_account(account_id): return jsonify(error="Invalid channel"), 404
     with db() as conn:
-        return jsonify([dict(row) for row in conn.execute("SELECT * FROM songs ORDER BY created DESC")])
+        return jsonify([dict(row) for row in conn.execute("SELECT * FROM songs WHERE account_id=? ORDER BY created DESC", (account_id,))])
 
 @app.post("/api/upload")
 def upload():
     uploaded = request.files.get("audio")
     if not uploaded or not uploaded.filename.lower().endswith((".mp3", ".wav", ".flac", ".m4a", ".ogg")):
         return jsonify(error="Select an MP3, WAV, FLAC, M4A, or OGG audio file."), 400
+    account_id = request.form.get("account_id", "default")
+    if not valid_account(account_id): return jsonify(error="Invalid channel"), 404
     song_id = uuid.uuid4().hex
     extension = Path(uploaded.filename).suffix.lower()
     filename = song_id + extension
@@ -57,25 +64,27 @@ def upload():
         return jsonify(error=f"Unable to read audio: {error}"), 400
     title = (request.form.get("title") or Path(uploaded.filename).stem)[:150]
     with db() as conn:
-        conn.execute("INSERT INTO songs VALUES (?, ?, ?, ?, ?)", (song_id, title, filename, duration, datetime.now().isoformat()))
+        conn.execute("INSERT INTO songs (id,title,filename,duration,created,account_id,prompt) VALUES (?,?,?,?,?,?,?)", (song_id, title, filename, duration, datetime.now().isoformat(), account_id, ""))
     return jsonify(id=song_id, title=title, duration=duration), 201
 
 @app.get("/api/song/<song_id>")
 def song_file(song_id):
     with db() as conn:
-        song = conn.execute("SELECT filename FROM songs WHERE id=?", (song_id,)).fetchone()
+        song = conn.execute("SELECT filename FROM songs WHERE id=? AND account_id=?", (song_id,request.args.get("account_id","default"))).fetchone()
     if not song: return jsonify(error="Not found"), 404
     return send_from_directory(SONGS, song["filename"])
 
 @app.get("/api/compilations")
 def compilations():
+    account_id = request.args.get("account_id", "default")
+    if not valid_account(account_id): return jsonify(error="Invalid channel"), 404
     with db() as conn:
-        return jsonify([dict(row) for row in conn.execute("SELECT * FROM compilations ORDER BY created DESC")])
+        return jsonify([dict(row) for row in conn.execute("SELECT * FROM compilations WHERE account_id=? ORDER BY created DESC", (account_id,))])
 
 @app.get("/api/video/<compilation_id>")
 def video_file(compilation_id):
     with db() as conn:
-        item = conn.execute("SELECT filename FROM compilations WHERE id=?", (compilation_id,)).fetchone()
+        item = conn.execute("SELECT filename FROM compilations WHERE id=? AND account_id=?", (compilation_id,request.args.get("account_id","default"))).fetchone()
     if not item: return jsonify(error="Not found"), 404
     return send_from_directory(VIDEOS, item["filename"], as_attachment=True)
 
@@ -88,13 +97,13 @@ def timestamp(seconds):
     value = int(seconds)
     return f"{value//3600:02}:{value//60%60:02}:{value%60:02}"
 
-def render_job(task_id, track_ids, title):
+def render_job(task_id, track_ids, title, account_id="default", thumbnail=""):
     jobs[task_id] = {"status": "running"}
     try:
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             raise RuntimeError("FFmpeg and ffprobe must be installed and on PATH.")
         with db() as conn:
-            records = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM songs")}
+            records = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM songs WHERE account_id=?", (account_id,))}
         tracks = [records[id_] for id_ in track_ids]
         work = VIDEOS / (task_id + "_parts")
         work.mkdir(exist_ok=True)
@@ -119,11 +128,16 @@ def render_job(task_id, track_ids, title):
         draw.ellipse((620, 180, 1300, 860), outline=(173, 97, 232), width=12)
         draw.text((150, 900), title[:90], fill="white")
         im.save(cover)
+        if thumbnail:
+            import re
+            if not re.fullmatch(r"[a-f0-9]{32}\\.png", thumbnail) or not (THUMBS / thumbnail).is_file():
+                raise ValueError("Invalid saved thumbnail")
+            cover = THUMBS / thumbnail
         output = VIDEOS / (task_id + ".mp4")
         jobs[task_id]["progress"] = "Encoding final video"
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-framerate", "1", "-i", str(cover), "-i", str(joined), "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-r", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(output)], check=True)
         with db() as conn:
-            conn.execute("INSERT INTO compilations VALUES (?, ?, ?, ?, ?)", (task_id, title, output.name, "\n".join(chapters), datetime.now().isoformat()))
+            conn.execute("INSERT INTO compilations (id,title,filename,chapters,created,account_id,thumbnail) VALUES (?,?,?,?,?,?,?)", (task_id, title, output.name, "\n".join(chapters), datetime.now().isoformat(), account_id, thumbnail))
         jobs[task_id] = {"status": "done", "id": task_id}
     except Exception as error:
         jobs[task_id] = {"status": "error", "error": str(error)}
@@ -136,14 +150,17 @@ def create_compilation():
     ids = payload.get("track_ids")
     if not isinstance(ids, list) or not 1 <= len(ids) <= 30 or not all(isinstance(i, str) for i in ids):
         return jsonify(error="Select 1-30 songs."), 400
+    account_id = payload.get("account_id", "default")
+    if not valid_account(account_id): return jsonify(error="Select a valid channel"), 404
     with db() as conn:
-        count = conn.execute(f"SELECT COUNT(*) FROM songs WHERE id IN ({','.join('?' for _ in ids)})", ids).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM songs WHERE account_id=? AND id IN ({','.join('?' for _ in ids)})", [account_id]+ids).fetchone()[0]
     if count != len(set(ids)) or len(set(ids)) != len(ids):
         return jsonify(error="Invalid or duplicate song selection."), 400
     title = str(payload.get("title") or "AI Music Compilation").strip()[:100]
     task_id = uuid.uuid4().hex
     jobs[task_id] = {"status": "queued"}
-    threading.Thread(target=render_job, args=(task_id, ids, title), daemon=True).start()
+    thumbnail = str(payload.get("thumbnail") or "")
+    threading.Thread(target=render_job, args=(task_id, ids, title, account_id, thumbnail), daemon=True).start()
     return jsonify(task_id=task_id), 202
 
 generation_jobs = {}
@@ -169,6 +186,9 @@ def generation_job_status(job_id):
 
 def generation_worker(job_id, payload):
     job = generation_jobs[job_id]
+    account = valid_account(payload["account_id"])
+    prompts = []
+    generated_ids = []
     try:
         for index in range(payload["count"]):
             job["current"] = index + 1
@@ -178,7 +198,18 @@ def generation_worker(job_id, payload):
             path = SONGS / filename
             genre = payload["genre"].strip()
             base_prompt = payload["prompt"].strip()
-            description = ", ".join(part for part in (genre, base_prompt) if part)
+            if payload.get("auto_prompts"):
+                job["progress"] = "AI writing distinct prompt for song " + str(index+1)
+                try:
+                    description = compose_music_prompt(account, base_prompt, index+1, prompts)
+                except Exception as exc:
+                    job["failures"].append({"song": index+1, "error": str(exc)[:400]})
+                    job["status"] = "error"
+                    job["progress"] = "AI prompt generation failed; batch stopped"
+                    return
+            else:
+                description = ", ".join(part for part in (genre, base_prompt) if part)
+            prompts.append(description)
             title = f"{payload['title_prefix']} {index+1:02d}"
             try:
                 generate_one(description, payload["duration"], payload["instrumental"], path,
@@ -187,8 +218,9 @@ def generation_worker(job_id, payload):
                 if duration <= 0:
                     raise ValueError("Generated file has no audio.")
                 with db() as conn:
-                    conn.execute("INSERT INTO songs VALUES (?, ?, ?, ?, ?)",
-                                 (song_id, title, filename, duration, datetime.now().isoformat()))
+                    conn.execute("INSERT INTO songs (id,title,filename,duration,created,account_id,prompt) VALUES (?,?,?,?,?,?,?)",
+                                 (song_id, title, filename, duration, datetime.now().isoformat(), payload["account_id"], description))
+                generated_ids.append(song_id)
                 job["completed"] += 1
                 job["results"].append({"id": song_id, "title": title, "duration": duration})
             except Exception as error:
@@ -197,6 +229,13 @@ def generation_worker(job_id, payload):
                 job["progress"] = "Song failed; continuing with next"
         job["status"] = "done" if not job["failures"] else ("partial" if job["completed"] else "error")
         job["progress"] = "Batch finished"
+        if payload.get("auto_compile") and generated_ids:
+            compilation_id = uuid.uuid4().hex
+            jobs[compilation_id] = {"status":"queued"}
+            name = payload.get("compilation_title") or account["name"] + " - Music Compilation"
+            job["compilation_task_id"] = compilation_id
+            threading.Thread(target=render_job, args=(compilation_id,generated_ids,name,payload["account_id"],payload.get("thumbnail","")),daemon=True).start()
+            job["progress"] = "Batch finished; video rendering started"
     except Exception as error:
         job["status"] = "error"
         job["progress"] = str(error)
@@ -213,7 +252,10 @@ def generate():
         return jsonify(error="Count and duration must be integers."), 400
     if not 1 <= count <= 10 or not 30 <= duration <= 600:
         return jsonify(error="Select 1-10 songs and 30-600 seconds per song."), 400
-    genre = str(payload.get("genre") or "Lo-fi").strip()[:80]
+    account_id = payload.get("account_id", "default")
+    account = valid_account(account_id)
+    if not account: return jsonify(error="Select a valid channel"), 404
+    genre = str(payload.get("genre") or account["genre"]).strip()[:80]
     prompt = str(payload.get("prompt") or "").strip()[:1000]
     title_prefix = str(payload.get("title_prefix") or genre + " Track").strip()[:90]
     if not prompt:
@@ -232,7 +274,11 @@ def generate():
                                 "progress": "Queued", "started": datetime.now().isoformat()}
     settings = {"count": count, "duration": duration, "genre": genre,
                 "prompt": prompt, "title_prefix": title_prefix,
-                "instrumental": bool(payload.get("instrumental", True))}
+                "instrumental": bool(payload.get("instrumental", True)),
+                "account_id": account_id, "auto_prompts": bool(payload.get("auto_prompts", False)),
+                "auto_compile": bool(payload.get("auto_compile", False)),
+                "compilation_title": str(payload.get("compilation_title") or "")[:100],
+                "thumbnail": str(payload.get("thumbnail") or "")}
     try:
         threading.Thread(target=generation_worker, args=(job_id, settings), daemon=True).start()
     except Exception:
