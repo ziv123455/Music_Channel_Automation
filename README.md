@@ -37,3 +37,19 @@ $env:ACESTEP_API_URL="http://127.0.0.1:8001"
 ```
 
 ACE-Step installation, model weights, and compatible GPU resources are not included in this project. Music durations are requested targets, not guarantees. This integration has not yet been tested against your local ACE-Step installation.
+
+## Multi-channel workflow (free local tools)
+
+1. **Account Manager:** add channel name, email, genre and creative direction. Emails are stored as labels locally; this is **not** a YouTube account login or OAuth connection. Existing songs and compilations automatically migrate to `Default Channel`; they are not deleted.
+2. **Ollama prompt AI:** install free Ollama from https://ollama.com/download/windows . Open PowerShell and run:
+   ```powershell
+   ollama pull llama3.2:3b
+   ```
+   Leave Ollama running in the background. The dashboard checks `http://127.0.0.1:11434/api/tags`. Change the model by setting the `OLLAMA_MODEL` environment variable before starting the dashboard. A 3B model is selected to fit alongside ACE-Step on an 8 GB RTX 4060 Ti; the service unloads the text model after each prompt request. GPU/CPU memory is still shared, so close other GPU-heavy apps while generating.
+3. **Music generation:** select a channel, enable "Use free Ollama AI to write a different prompt for every song", choose a theme, song count (up to 10) and desired seconds per song. The model writes an original production prompt for every track and ACE-Step renders them sequentially. Each saved song stores the exact generated prompt and account ID.
+4. **Thumbnail Studio:** generate a custom 1280 x 720 PNG using any of five color palettes, title and optional uploaded background image. This is a **free template-based graphic generator**, not a text-to-image AI model; it works entirely offline and requires no new GPU workload. The most recently generated thumbnail is remembered per channel and becomes the background of the compilation video. Download the PNG for the separate YouTube thumbnail upload.
+5. **Automatic compilation:** tick the auto compilation option before generating a batch. Once the batch finishes, the app starts rendering all successfully generated tracks, in order, into a YouTube-ready MP4, plus chapter timestamps. The target of 10 x 360 seconds is approximately 60 minutes, but ACE-Step durations can vary; this version does **not** falsely stretch/pad/loop the video to exactly one hour.
+
+**Important:** The local Flask server has no authentication; run it only on `127.0.0.1`. Your email is metadata only. No YouTube login/upload is included. Generated audio/video, database, artwork and local AI models remain in `data/` and are not synchronized by Git. Existing local data is preserved by non-destructive migrations. The ACE-Step API integration and local Ollama/thumbnail integration have not yet been end-to-end tested on your Windows PC.
+
+**Suggested first test:** keep ACE-Step running, run `ollama pull llama3.2:3b`, restart Flask, add "Classical" account with your email, preview a unique AI prompt, generate one 60-second instrumental track, create an image in Thumbnail Studio and render a short compilation. Once this succeeds, scale to 10 tracks.
