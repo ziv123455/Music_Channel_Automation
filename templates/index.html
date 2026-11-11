@@ -131,9 +131,11 @@ $('generateForm').onsubmit=async e=>{
  try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value,thumbnail:savedThumbnail});await showJobs()}catch(e){alert(e.message)}
  finally{$('generateBtn').disabled=false}
 };
+const seenFinishedCompilations=new Set();
 async function showJobs(){
  try{const jobs=(await read('/generation/jobs')).filter(j=>j.account_id===activeAccount||!j.account_id);
  $('generationJobs').innerHTML=jobs.length?jobs.map(j=>'<div class="status"><strong>Batch '+esc(j.id.slice(0,8))+'</strong> · '+esc(j.status)+'<p class="muted">Song '+j.current+' / '+j.count+' — '+j.completed+' completed — '+esc(j.progress||'')+'</p>'+(j.results.length?'<p class="good">'+j.results.length+' songs saved</p>':'')+(j.failures.length?'<p class="error">'+esc(j.failures.map(f=>'#'+f.song+': '+f.error).join('; '))+'</p>':'')+(j.compilation_task_id?'<p>Video task: '+esc(j.compilation_task_id.slice(0,8))+'</p>':'')+'</div>').join(''):'No batches for this channel.';
+  for(const job of jobs){if(job.compilation_task_id){try{const task=await read('/tasks/'+job.compilation_task_id);const node=document.createElement('div');node.className='muted';node.textContent='Auto compilation '+job.compilation_task_id.slice(0,8)+': '+task.status+' '+(task.progress||task.error||'');$('generationJobs').appendChild(node);if(task.status==='done'&&!seenFinishedCompilations.has(job.compilation_task_id)){seenFinishedCompilations.add(job.compilation_task_id);refresh()}}catch(e){/* render may have restarted */}}}
  }catch(e){$('generationJobs').textContent=e.message}
 }
 async function refresh(){
