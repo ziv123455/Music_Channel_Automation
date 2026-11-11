@@ -102,7 +102,7 @@ const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padSt
 async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
-function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail='';$('thumbPreview').style.display='none';$('thumbLink').textContent='';refresh();showJobs()}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML=savedThumbnail?'<a href="/api/thumbnail/'+encodeURIComponent(savedThumbnail)+'" download>Download saved PNG</a>':'';refresh();showJobs()}
 async function loadAccounts(){
  accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
  renderAccounts();applyAccount();
@@ -158,7 +158,7 @@ $('thumbnailForm').onsubmit=async e=>{
  e.preventDefault();const data=new FormData();data.set('account_id',activeAccount);data.set('title',$('thumbTitle').value);data.set('palette',$('palette').value);
  if($('thumbBackground').files[0])data.set('background',$('thumbBackground').files[0]);
  $('thumbnailStatus').textContent='Generating thumbnail...';
- try{const r=await fetch('/api/thumbnails',{method:'POST',body:data}),j=await r.json();if(!r.ok)throw Error(j.error);savedThumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('thumbnailStatus').textContent='Thumbnail generated and selected for this channel session.';$('thumbLink').innerHTML='<a href="'+j.url+'" download>Download PNG</a>'}catch(err){$('thumbnailStatus').textContent=err.message}
+ try{const r=await fetch('/api/thumbnails',{method:'POST',body:data}),j=await r.json();if(!r.ok)throw Error(j.error);savedThumbnail=j.filename;const a=current();if(a)a.thumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('thumbnailStatus').textContent='Thumbnail generated and selected for this channel session.';$('thumbLink').innerHTML='<a href="'+j.url+'" download>Download PNG</a>'}catch(err){$('thumbnailStatus').textContent=err.message}
 };
 read('/health').then(h=>$('health').textContent=h.ffmpeg&&h.ffprobe?'✓ FFmpeg ready':'Install FFmpeg');
 loadAccounts().catch(e=>alert('Failed to load accounts: '+e.message));connections();setInterval(showJobs,5000);
