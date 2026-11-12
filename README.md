@@ -1,3 +1,25 @@
+## Moving the actual AI files into this project (not junctions)
+
+Run `move-ai-folders.bat` **instead of** `setup-workspace.bat` if you want real ACE-Step / Forge folders inside the project. Stop the AI servers and Flask before the move. The script prompts separately before moving each installed engine. If `setup-workspace.bat` was already used, it detects the existing local junction, verifies that it points to an expected Desktop AI installation, and asks before converting it to a real directory. It does not delete AI models or overwrite an existing real folder. If anything fails, inspect both source and destination folders before trying again.
+
+Target layout:
+
+```text
+Music_Channel_Automation/
+  move-ai-folders.bat        # one-time physical mover
+  start-all.bat              # daily start, after migration
+  tools/
+    ACE-Step-1.5/           # REAL files and its model checkpoints
+    stable-diffusion-webui-forge/ # REAL files (only if installed)
+  data/                      # local music/videos/library
+```
+
+**Ollama:** The Ollama Windows application stays installed normally, because moving its installation directory manually can break its configuration. You can optionally relocate Ollama's downloaded model storage using the `OLLAMA_MODELS` environment variable and the official Ollama setup instructions, but this is not performed by our move script. Our one-click launcher still starts it.
+
+**Git:** The `tools/` directory is ignored. Moving the AI files into this project does **not** upload their enormous models, virtual environments or third-party repositories to GitHub. Sync continues to share our own application source only.
+
+**Windows Python environment:** ACE-Step's existing `.venv` can contain absolute paths; if it fails after moving, run `uv sync` inside `tools\ACE-Step-1.5` (or rebuild its venv). Forge may need its own setup repair after moving. Never share a virtual environment between the apps.
+
 ## One-click Windows workspace
 
 After a git pull, use the new entrypoints:
