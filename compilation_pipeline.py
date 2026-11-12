@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import os
 import random
 import re
 import sqlite3
@@ -20,6 +21,8 @@ bp = Blueprint("pipeline", __name__, url_prefix="/api")
 REFERENCES = DB.parent / "references"
 REFERENCES.mkdir(parents=True, exist_ok=True)
 IMAGE_API = "http://127.0.0.1:7860"
+OLLAMA_API = "http://127.0.0.1:11434"
+VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma3:4b")
 render_callback = None
 render_jobs = None
 
@@ -251,6 +254,87 @@ def image_status():
     except requests.RequestException as exc:
         return jsonify(connected=False,error=str(exc))
 
+
+@bp.get("/thumbnail-ai/vision-status")
+def vision_status():
+    try:
+        response = requests.get(OLLAMA_API + "/api/tags", timeout=6)
+        response.raise_for_status()
+        installed = [m.get("name", "") for m in response.json().get("models", [])]
+        ready = any(m == VISION_MODEL or m.split(":")[0] == VISION_MODEL.split(":")[0] for m in installed)
+        return jsonify(connected=True, model=VISION_MODEL, model_ready=ready)
+    except requests.RequestException as exc:
+        return jsonify(connected=False, model=VISION_MODEL, model_ready=False, error=str(exc))
+
+
+@bp.post("/thumbnail-ai/suggest-prompt")
+def suggest_thumbnail_prompt():
+    data = request.get_json(silent=True) or {}
+    account = current_account(data)
+    if not account:
+        return jsonify(error="Unknown channel"), 404
+    ref_id = str(data.get("reference_id") or "")
+    with connect() as cn:
+        ref = cn.execute(
+            "SELECT filename FROM thumbnail_references WHERE id=? AND account_id=?",
+            (ref_id, account["id"])
+        ).fetchone()
+    if not ref:
+        return jsonify(error="Choose a reference from this channel first."), 400
+    source = REFERENCES / ref["filename"]
+    if not source.is_file():
+        return jsonify(error="Reference image file is missing."), 404
+    with Image.open(source) as original:
+        image = original.convert("RGB")
+        image.thumbnail((768, 768))
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85)
+    image_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+    direction = str(data.get("direction") or "").strip()[:600]
+    instruction = (
+        "You are an expert art director writing prompts for Stable Diffusion 1.5 "
+        "image-to-image YouTube music thumbnails. Analyze the ATTACHED IMAGE VISUALLY. "
+        "Identify the actual subjects, object count, composition, medium, lighting, "
+        "palette, mood and camera framing. Preserve the core visual theme, but invent "
+        "a distinct original scene rather than duplicating the image. "
+        "Do not hallucinate a piano, person or other object unless it is visible or "
+        "the user's creative direction explicitly asks for it. "
+        "Prefer one clear focal point, physically plausible anatomy and objects, "
+        "no duplicated figures, polished thumbnail-friendly 16:9 framing. "
+        "The generated image must contain no text. "
+        "Use the channel genre as mood context rather than assuming objects. "
+        "Reply ONLY with a JSON object with two string keys: "
+        "'prompt' (rich, specific, comma-separated English visual description, "
+        "max 110 words) and 'negative_prompt' (comma-separated quality defects, "
+        "max 65 words). No markdown. "
+        f"Channel genre: {account.get('genre', 'Music')}. "
+        f"Channel creative direction: {str(account.get('description') or '')[:300]}. "
+        f"User design direction: {direction or 'Original artwork inspired by the reference'}."
+    )
+    try:
+        response = requests.post(
+            OLLAMA_API + "/api/generate",
+            json={"model": VISION_MODEL, "prompt": instruction,
+                  "images": [image_b64], "stream": False, "format": "json",
+                  "options": {"temperature": 0.4, "num_predict": 280}},
+            timeout=240
+        )
+        response.raise_for_status()
+        result = json.loads(response.json().get("response") or "{}")
+        prompt = str(result.get("prompt") or "").strip()[:950]
+        negative = str(result.get("negative_prompt") or "").strip()[:500]
+        if len(prompt) < 35:
+            raise ValueError("Vision model returned an incomplete image prompt.")
+        if not negative:
+            negative = "blurry, distorted objects, duplicate subjects, extra limbs, text, watermark, logo"
+        return jsonify(prompt=prompt, negative_prompt=negative, model=VISION_MODEL)
+    except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return jsonify(error=(
+            f"Ollama vision analysis failed ({VISION_MODEL}). "
+            "Run 'ollama pull " + VISION_MODEL + "' once, confirm Ollama is running, "
+            "then retry. Details: " + str(exc)[:240]
+        )), 503
+
 @bp.post("/thumbnail-ai/generate")
 def generate_art():
     data=request.get_json(silent=True) or {}
@@ -265,6 +349,7 @@ def generate_art():
     if not original_path.is_file():return jsonify(error="Reference image is missing."),404
     description=str(data.get("prompt") or "").strip()[:800]
     title=str(data.get("title") or "AI Music Mix")[:100]
+    negative=str(data.get("negative_prompt") or "").strip()[:650]
     if not description:return jsonify(error="Describe the desired thumbnail."),400
     try:
         strength=float(data.get("strength",0.65))
@@ -278,9 +363,9 @@ def generate_art():
     # Image-to-image: guided by one selected example. Avoid exact replication.
     payload={"init_images":["data:image/png;base64,"+encoded],
              "prompt":description+", original professional cinematic music cover artwork, beautiful lighting, wide composition, no watermark",
-             "negative_prompt":"watermark, logo, unreadable text, low quality, exact copy, signature",
+             "negative_prompt":negative + ", blurry, low quality, distorted objects, duplicate person, extra limbs, text, watermark, logo, signature",
              "denoising_strength":strength,"width":1024,"height":576,
-             "steps":20,"cfg_scale":6,"sampler_name":"Euler a","batch_size":1,"n_iter":1}
+             "steps":28,"cfg_scale":6.5,"sampler_name":"DPM++ 2M","batch_size":1,"n_iter":1}
     try:
         response=requests.post(IMAGE_API+"/sdapi/v1/img2img",json=payload,timeout=900)
         response.raise_for_status()
