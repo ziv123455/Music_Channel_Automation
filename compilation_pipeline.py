@@ -291,28 +291,53 @@ def suggest_thumbnail_prompt():
         image.save(buffer, format="JPEG", quality=85)
     image_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
     direction = str(data.get("direction") or "").strip()[:600]
-    instruction = (
-        "You are an expert art director for ORIGINAL YouTube music thumbnail artwork. "
-        "Look at the attached reference image and analyze its artistic medium, era, "
-        "palette, lighting, mood, visual texture and framing. "
-        "Use its STYLE as inspiration, NOT its exact scene, figures, poses, "
-        "object placements or iconic composition. Design a DISTINCT original "
-        "scene fitting the user's channel and creative direction. "
-        "For a classical music channel, music-related subjects such as a large "
-        "grand piano or concert hall can be appropriate when requested. "
-        "Create a polished SDXL / Juggernaut XL txt2img prompt. "
-        "Require one large unmistakable focal subject, readable at small mobile "
-        "thumbnail size, realistic object geometry, clear 16:9 cinematic composition, "
-        "rich intentional lighting, no text in the AI artwork. "
-        "Do not describe the reference as the intended generated image. "
-        "Return ONLY JSON with exactly three strings: "
-        "prompt (50-110 words describing your NEW image), "
-        "negative_prompt (visual defects and unwanted elements, <=65 words), "
-        "style_summary (1-2 sentences explaining the reference's visual style). "
-        f"Channel genre: {account.get('genre', 'Music')}. "
-        f"Channel direction: {str(account.get('description') or '')[:300]}. "
-        f"Requested new artwork: {direction or 'Original thumbnail influenced by the reference style'}."
-    )
+    mode = str(data.get("mode") or "style")
+    if mode not in ("style", "remake", "img2img", "text"):
+        return jsonify(error="Invalid analysis mode."), 400
+    if mode in ("remake", "img2img"):
+        instruction = (
+            "You are an expert image-to-image art director. Examine the ATTACHED IMAGE. "
+            "Write a faithful but creatively reimagined description of what is actually visible. "
+            "RETAIN the source's central concept, specific subject category, main objects, "
+            "scene setting, viewpoint, visual hierarchy, approximate placement, "
+            "artistic medium and mood. CHANGE secondary objects, decor, lighting, "
+            "figure designs, materials, colors and other details to make a distinct rendition. "
+            "Never replace the image's actual core subject with a piano or concert hall "
+            "just because this is a music channel. If the reference depicts a giant framed "
+            "geometric diagram with a scholar, keep a framed diagram and scholar in the remake. "
+            "Describe only visually plausible features and preserve key subject counts. "
+            "Create a detailed prompt suitable for SDXL / Juggernaut img2img. "
+            "Avoid instructions to copy the original artwork exactly, and avoid adding text. "
+            "Reply ONLY with JSON containing strings: prompt (50-110 words specifying "
+            "the SAME SCENE IDEA with newly redesigned details), negative_prompt "
+            "(exclude unrelated subject changes, defects, text), style_summary "
+            "(the important original subject and composition). "
+            f"User's desired changes: {direction or 'Redesign the reference with new details'}. "
+            f"Channel genre (mood only, NOT replacement subject): {account.get('genre', 'Music')}."
+        )
+    else:
+        instruction = (
+            "You are an expert art director for ORIGINAL YouTube music thumbnail artwork. "
+            "Look at the attached reference image and analyze its artistic medium, era, "
+            "palette, lighting, mood, visual texture and framing. "
+            "Use its STYLE as inspiration, NOT its exact scene, figures, poses, "
+            "object placements or iconic composition. Design a DISTINCT original "
+            "scene fitting the user's channel and creative direction. "
+            "For a classical music channel, music-related subjects such as a large "
+            "grand piano or concert hall can be appropriate when requested. "
+            "Create a polished SDXL / Juggernaut XL txt2img prompt. "
+            "Require one large unmistakable focal subject, readable at small mobile "
+            "thumbnail size, realistic object geometry, clear 16:9 cinematic composition, "
+            "rich intentional lighting, no text in the AI artwork. "
+            "Do not describe the reference as the intended generated image. "
+            "Return ONLY JSON with exactly three strings: "
+            "prompt (50-110 words describing your NEW image), "
+            "negative_prompt (visual defects and unwanted elements, <=65 words), "
+            "style_summary (1-2 sentences explaining the reference's visual style). "
+            f"Channel genre: {account.get('genre', 'Music')}. "
+            f"Channel direction: {str(account.get('description') or '')[:300]}. "
+            f"Requested new artwork: {direction or 'Original thumbnail influenced by the reference style'}."
+        )
     try:
         response = requests.post(
             OLLAMA_API + "/api/generate",
@@ -346,7 +371,7 @@ def generate_art():
         return jsonify(error="Unknown channel"), 404
 
     mode = str(data.get("mode") or "style").strip()
-    if mode not in ("style", "img2img", "text"):
+    if mode not in ("style", "remake", "img2img", "text"):
         return jsonify(error="Invalid thumbnail generation mode."), 400
 
     ref_id = str(data.get("reference_id") or "")
@@ -385,9 +410,9 @@ def generate_art():
         "send_images": True
     }
 
-    if mode == "img2img":
+    if mode in ("remake", "img2img"):
         try:
-            strength = float(data.get("strength", 0.45))
+            strength = float(data.get("strength", 0.45 if mode == "remake" else 0.30))
         except (TypeError, ValueError):
             return jsonify(error="Invalid img2img transformation strength."), 400
         if not 0.2 <= strength <= 0.95:
