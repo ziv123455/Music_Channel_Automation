@@ -1,3 +1,33 @@
+## One-click Windows workspace
+
+After a git pull, use the new entrypoints:
+
+- `setup-workspace.bat` (optional, one time): creates `tools/ACE-Step-1.5` and `tools/stable-diffusion-webui-forge` as **Windows directory junctions** pointing to previously installed AI engines on the Desktop. No models are moved, copied, deleted, or uploaded. Ollama stays installed in its normal Windows location.
+- `start-all.bat`: starts ACE-Step (8001), Ollama (11434), Forge (7860, if installed), and the Flask dashboard (5050). Services already listening on those ports are not launched twice. Each service runs in its own console and can be stopped independently. The launcher opens the dashboard in your browser.
+- `start.bat`: dashboard alone (still supported).
+- `start-auto-sync.bat`: optional Git sync as before; it is **not** started automatically by the all-in-one launcher.
+
+Expected folder view:
+
+```text
+Music_Channel_Automation/
+  start-all.bat
+  setup-workspace.bat
+  start.bat
+  start-auto-sync.bat
+  scripts/
+  tools/                       # ignored by Git
+    ACE-Step-1.5/              # junction to existing local install
+    stable-diffusion-webui-forge/ # junction if Forge installed
+  data/                        # ignored by Git; songs, artwork, SQLite
+  app.py
+  templates/
+```
+
+The folder junctions only organize files in Explorer and keep huge models out of Git. They are **not** a single Python runtime and should not share virtual environments: each AI still runs in its own process. You do not need to install Forge to run music; its unavailable status is reported instead. To use Forge's img2img API, ensure Forge is configured to launch with `--api` and a checkpoint is installed. If Forge or ACE-Step is installed somewhere other than the Desktop, create the corresponding junction manually in `tools/` or edit the candidate path list in `scripts/start-all.ps1`. The system listens on loopback only.
+
+**First run:** double-click `setup-workspace.bat` then `start-all.bat`. The first launch may load large models. The one-click launcher does not download or update AI model weights; those must be installed in their individual applications first.
+
 # Music Channel Automation
 
 Local Windows music-compilation studio built with Flask and FFmpeg.
