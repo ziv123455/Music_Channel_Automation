@@ -260,7 +260,7 @@ $('suggestImagePrompt').onclick=async()=>{
  catch(e){$('imageAiMessage').textContent=e.message}
  finally{btn.disabled=false}
 };
-function updateImageMode(){const mode=$('imageMode').value;$('imageDirection').parentElement; $('imageDirection').style.display=(mode==='remake'||mode==='img2img')?'block':'none';document.querySelector('label[for=imageDirection]').style.display=(mode==='remake'||mode==='img2img')?'block':'none';$('strengthContainer').style.display=(mode==='img2img'||mode==='remake')?'block':'none';$('autoVisionPrompt').disabled=mode==='text';$('suggestImagePrompt').disabled=mode==='text';if(mode==='text')$('autoVisionPrompt').checked=false;else $('autoVisionPrompt').checked=true}
+function updateImageMode(){const mode=$('imageMode').value;$('imageDirection').style.display=(mode==='remake'||mode==='img2img')?'block':'none';document.querySelector('label[for=imageDirection]').style.display=(mode==='remake'||mode==='img2img')?'block':'none';$('strengthContainer').style.display=(mode==='img2img'||mode==='remake')?'block':'none';$('autoVisionPrompt').disabled=mode==='text';$('suggestImagePrompt').disabled=mode==='text';if(mode==='text')$('autoVisionPrompt').checked=false;else $('autoVisionPrompt').checked=true}
 $('imageMode').onchange=updateImageMode;updateImageMode();
 $('imageAiForm').onsubmit=async e=>{
  e.preventDefault();const mode=$('imageMode').value;if(mode!=='text'&&!selectedReferenceId){$('imageAiMessage').textContent='Choose a reference image first.';return}
