@@ -236,6 +236,8 @@ def thumbnail():
     name = create_thumbnail(account, title, account["genre"], palette, background)
     with connect() as cn:
         cn.execute("UPDATE accounts SET thumbnail=? WHERE id=?", (name, account_id))
+        cn.execute("INSERT INTO thumbnail_library (id,account_id,filename,title,method,reference_id,created) VALUES (?,?,?,?,?,?,?)",
+                   (uuid.uuid4().hex,account_id,name,title,"template",None,datetime.now().isoformat()))
     return jsonify(filename=name, url="/api/thumbnail/"+name)
 
 @bp.get("/thumbnail/<filename>")
