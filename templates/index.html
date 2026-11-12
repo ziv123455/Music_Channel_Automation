@@ -91,8 +91,12 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <button type="submit">Save example to reference library</button></form>
 <h3>Reference library</h3><div id="referenceLibrary" class="grid"></div>
 <form id="imageAiForm">
-<label>Design prompt</label><textarea id="imagePrompt" required>Original peaceful classical music cover artwork, a majestic grand piano inside a candlelit concert hall, warm golden lighting, elegant cinematic atmosphere, beautifully composed, no text.</textarea>
-<div class="grid"><div><label>Reference influence / transformation strength</label><select id="imageStrength"><option value="0.45">Close to reference style</option><option value="0.65" selected>Balanced creative variation</option><option value="0.8">More original variation</option></select></div>
+<div id="visionStatus" class="status muted">Checking Ollama vision model...</div>
+<label><input id="autoVisionPrompt" type="checkbox" checked> Automatically let Ollama analyze the selected reference before generation</label>
+<p><button type="button" id="suggestImagePrompt">Analyze reference with Ollama and preview prompt</button></p>
+<label>Design prompt (editable after AI analysis)</label><textarea id="imagePrompt" required>Original peaceful classical music cover artwork, a majestic grand piano inside a candlelit concert hall, warm golden lighting, elegant cinematic atmosphere, beautifully composed, no text.</textarea>
+<label>Negative prompt (editable)</label><textarea id="imageNegative" placeholder="blurry, duplicate subjects, bad anatomy, distorted objects, text, watermark">blurry, low quality, duplicate subjects, extra limbs, distorted instruments, text, logo, watermark</textarea>
+<div class="grid"><div><label>Reference influence / transformation strength</label><select id="imageStrength"><option value="0.32">Close to reference style</option><option value="0.45" selected>Balanced creative variation</option><option value="0.65">More original variation</option></select></div>
 <div><label>Thumbnail title (library label)</label><input id="aiThumbTitle" value="Peaceful Classical Music"></div></div>
 <p><button type="submit" id="aiThumbButton">Generate AI thumbnail from selected example</button></p>
 </form>
@@ -131,7 +135,7 @@ const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padSt
 async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const text=await r.text();let j;try{j=JSON.parse(text)}catch(e){throw Error('Server returned HTTP '+r.status+' instead of JSON. Check the Flask PowerShell window for the underlying error.')}if(!r.ok)throw Error(j.error||'Request failed (HTTP '+r.status+')');return j}
 function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
-function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi()}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 async function loadAccounts(){
  accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
  renderAccounts();applyAccount();
@@ -144,7 +148,7 @@ $('channelSwitcher').onchange=e=>{activeAccount=e.target.value;applyAccount()};
 document.querySelectorAll('.tab[data-tab]').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('.tab[data-tab]').forEach(x=>x.classList.toggle('active',x===b));
  document.querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+b.dataset.tab));
- if(b.dataset.tab==='library'||b.dataset.tab==='mixes')refresh();if(b.dataset.tab==='thumbnail'){loadGallery();loadReferences();checkImageAi()}
+ if(b.dataset.tab==='library'||b.dataset.tab==='mixes')refresh();if(b.dataset.tab==='thumbnail'){loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 });
 async function connections(){
  try{const j=await read('/generation/connection');$('aceStatus').className='status '+(j.connected?'good':'warning');$('aceStatus').textContent=j.connected?'✓ ACE-Step connected':'ACE-Step disconnected: '+esc(j.error)}catch(e){$('aceStatus').textContent=e.message}
@@ -233,10 +237,31 @@ $('referenceForm').onsubmit=async e=>{
  const r=await fetch('/api/references',{method:'POST',body:data}),j=await r.json();if(!r.ok)throw Error(j.error);
  selectedReferenceId=j.id;await loadReferences();$('imageAiMessage').textContent='Example saved to reference library.';}catch(e){$('imageAiMessage').textContent=e.message}
 };
+async function checkVisionAi(){
+ try{const j=await read('/thumbnail-ai/vision-status');$('visionStatus').className='status '+(j.connected&&j.model_ready?'good':'warning');$('visionStatus').textContent=j.connected&&j.model_ready?'Ollama image analysis ready ('+j.model+')':j.connected?'Install vision model in PowerShell: ollama pull '+j.model:'Ollama offline. Start Ollama, then install vision model: ollama pull '+j.model}
+ catch(e){$('visionStatus').textContent=e.message}
+}
+async function analyzeReference(){
+ if(!selectedReferenceId)throw Error('Choose a saved reference image first.');
+ const originalAccount=activeAccount,originalRef=selectedReferenceId;
+ const j=await post('/thumbnail-ai/suggest-prompt',{account_id:originalAccount,reference_id:originalRef,direction:$('imagePrompt').value});
+ if(activeAccount!==originalAccount||selectedReferenceId!==originalRef)throw Error('Channel or reference changed. Please retry.');
+ $('imagePrompt').value=j.prompt;
+ $('imageNegative').value=j.negative_prompt;
+ return j;
+}
+$('suggestImagePrompt').onclick=async()=>{
+ const btn=$('suggestImagePrompt');btn.disabled=true;$('imageAiMessage').textContent='Ollama is inspecting your reference image and composing a prompt...';
+ try{const result=await analyzeReference();$('imageAiMessage').textContent='Prompt written by '+result.model+'. Review or edit it, then generate.'}
+ catch(e){$('imageAiMessage').textContent=e.message}
+ finally{btn.disabled=false}
+};
 $('imageAiForm').onsubmit=async e=>{
  e.preventDefault();if(!selectedReferenceId){$('imageAiMessage').textContent='Choose a reference image first.';return}
- $('aiThumbButton').disabled=true;$('imageAiMessage').textContent='Generating artwork in local image AI...';
- try{const j=await post('/thumbnail-ai/generate',{account_id:activeAccount,reference_id:selectedReferenceId,prompt:$('imagePrompt').value,title:$('aiThumbTitle').value,strength:Number($('imageStrength').value)});
+ $('aiThumbButton').disabled=true;$('imageAiMessage').textContent='Preparing thumbnail...';
+ try{if($('autoVisionPrompt').checked){$('imageAiMessage').textContent='Ollama is analyzing the reference image...';await analyzeReference()}
+ $('imageAiMessage').textContent='Sending Ollama-designed prompt to Forge to render artwork...';
+ const j=await post('/thumbnail-ai/generate',{account_id:activeAccount,reference_id:selectedReferenceId,prompt:$('imagePrompt').value,negative_prompt:$('imageNegative').value,title:$('aiThumbTitle').value,strength:Number($('imageStrength').value)});
  selectedThumbId=j.id;savedThumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('imageAiMessage').textContent='New AI thumbnail saved to library. Select it for your compilation.';await loadGallery();await refresh()}
  catch(e){$('imageAiMessage').textContent=e.message}finally{$('aiThumbButton').disabled=false}
 };
