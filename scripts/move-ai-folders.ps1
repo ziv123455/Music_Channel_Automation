@@ -28,12 +28,34 @@ foreach ($item in $items) {
     $dest = Join-Path $tools $item.Name
     if (Test-Path -LiteralPath $dest) {
         $entry = Get-Item -LiteralPath $dest -Force
-        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            Write-Warning "Existing link at $dest (from setup-workspace.bat). Not overwriting or deleting it. See README for safe conversion."
+        if ($entry.LinkType -eq 'Junction') {
+            # setup-workspace.bat previously made a shortcut; convert it only after confirmation.
+            $target = [string]$entry.Target
+            $expected = @($item.Sources | Where-Object { Test-Path -LiteralPath $_ })
+            $match = $false
+            foreach ($candidate in $expected) {
+                if ([string]::Equals([IO.Path]::GetFullPath($candidate).TrimEnd('\'),
+                                      [IO.Path]::GetFullPath($target).TrimEnd('\'),
+                                      [StringComparison]::OrdinalIgnoreCase)) { $match=$true }
+            }
+            if (-not $match) {
+                Write-Warning "Unexpected junction target for $dest. Not touching it: $target"
+                continue
+            }
+            Write-Host "[EXISTING JUNCTION] $dest -> $target"
+            $confirm=Read-Host 'Convert this link into a REAL moved folder? Type CONVERT'
+            if ($confirm -cne 'CONVERT') { Write-Host '[SKIPPED]'; continue }
+            # Windows rmdir removes a junction link only; it does NOT remove the target contents.
+            & cmd.exe /d /c ('rmdir "' + $dest + '"')
+            if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $dest)) {
+                Write-Warning 'Could not remove the folder junction. Source remains untouched.'
+                continue
+            }
+            Write-Host '[JUNCTION REMOVED] Actual AI files remain at their original path.'
         } else {
             Write-Host "[ALREADY PRESENT] $dest" -ForegroundColor Green
+            continue
         }
-        continue
     }
     $source = $null
     foreach ($path in $item.Sources) {
