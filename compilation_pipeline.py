@@ -296,22 +296,21 @@ def suggest_thumbnail_prompt():
         return jsonify(error="Invalid analysis mode."), 400
     if mode in ("remake", "img2img"):
         instruction = (
-            "You are an expert image-to-image art director. Examine the ATTACHED IMAGE. "
-            "Write a faithful but creatively reimagined description of what is actually visible. "
-            "RETAIN the source's central concept, specific subject category, main objects, "
-            "scene setting, viewpoint, visual hierarchy, approximate placement, "
-            "artistic medium and mood. CHANGE secondary objects, decor, lighting, "
-            "figure designs, materials, colors and other details to make a distinct rendition. "
-            "Never replace the image's actual core subject with a piano or concert hall "
-            "just because this is a music channel. If the reference depicts a giant framed "
-            "geometric diagram with a scholar, keep a framed diagram and scholar in the remake. "
-            "Describe only visually plausible features and preserve key subject counts. "
-            "Create a detailed prompt suitable for SDXL / Juggernaut img2img. "
-            "Avoid instructions to copy the original artwork exactly, and avoid adding text. "
-            "Reply ONLY with JSON containing strings: prompt (50-110 words specifying "
-            "the SAME SCENE IDEA with newly redesigned details), negative_prompt "
-            "(exclude unrelated subject changes, defects, text), style_summary "
-            "(the important original subject and composition). "
+            "You are a creative art director. Analyze the ATTACHED reference image visually, "
+            "then INVENT a fresh original reinterpretation for SDXL/Juggernaut XL TEXT-TO-IMAGE. "
+            "The generator WILL NOT receive the reference image: your prompt must be self-contained. "
+            "Retain only the recognizable core subject/concept and artistic mood; freely redesign "
+            "the setting, viewpoint, camera framing, composition, props, architecture, poses, "
+            "lighting and colors. Do not reproduce exact arrangements or iconic details. "
+            "Do not change the subject to a piano or concert hall unless the image or user's "
+            "instructions actually call for one. A Renaissance geometry scene should become "
+            "a novel scene about a scholar and geometric artwork, not a direct reproduction. "
+            "Create a compelling, clear focal point suitable for a 16:9 YouTube thumbnail. "
+            "Write a specific, visual, fully standalone generation prompt with distinct details. "
+            "Avoid text/watermarks in the generated image. "
+            "Reply ONLY with JSON strings: prompt (60-120 words describing your new image), "
+            "negative_prompt (defects and unwanted objects), "
+            "style_summary (brief summary of reference concept and medium). "
             f"User's desired changes: {direction or 'Redesign the reference with new details'}. "
             f"Channel genre (mood only, NOT replacement subject): {account.get('genre', 'Music')}."
         )
@@ -410,7 +409,7 @@ def generate_art():
         "send_images": True
     }
 
-    if mode in ("remake", "img2img"):
+    if mode == "img2img":
         try:
             strength = float(data.get("strength", 0.45 if mode == "remake" else 0.30))
         except (TypeError, ValueError):
@@ -425,6 +424,8 @@ def generate_art():
         payload["denoising_strength"] = strength
         endpoint = "/sdapi/v1/img2img"
     else:
+        # Style and Remake modes send ONLY text prompts to Forge.
+        # The reference image is used exclusively by Ollama vision analysis.
         endpoint = "/sdapi/v1/txt2img"
 
     try:
