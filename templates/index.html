@@ -82,7 +82,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 
 <div class="tabpane" id="pane-thumbnail">
 <section class="panel"><h2>Step 3 — AI thumbnail generator</h2>
-<p class="muted">Upload an example thumbnail you own or have permission to use. Select it as a visual reference. Local Stable Diffusion WebUI Forge will generate new artwork guided by that image and your prompt — not an exact copy.</p>
+<p class="muted">Upload a reference you own or have permission to use. Ollama can analyze its style, then Juggernaut XL generates a new scene (recommended). You can also choose image-to-image or text-only.</p>
 <div id="imageAiStatus" class="status muted">Checking local image AI...</div>
 <form id="referenceForm">
 <label>Upload example thumbnail (JPG / PNG / WebP)</label>
@@ -92,11 +92,13 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <h3>Reference library</h3><div id="referenceLibrary" class="grid"></div>
 <form id="imageAiForm">
 <div id="visionStatus" class="status muted">Checking Ollama vision model...</div>
-<label><input id="autoVisionPrompt" type="checkbox" checked> Automatically let Ollama analyze the selected reference before generation</label>
+<label>Generation mode</label><select id="imageMode"><option value="style" selected>Style to new scene (recommended, txt2img)</option><option value="img2img">Close reference variation (img2img)</option><option value="text">Text only (no reference needed)</option></select>
+<label><input id="autoVisionPrompt" type="checkbox" checked> Automatically let Ollama analyze the reference before generation</label>
 <p><button type="button" id="suggestImagePrompt">Analyze reference with Ollama and preview prompt</button></p>
+<div id="styleSummary" class="status muted" style="display:none"></div>
 <label>Design prompt (editable after AI analysis)</label><textarea id="imagePrompt" required>Original peaceful classical music cover artwork, a majestic grand piano inside a candlelit concert hall, warm golden lighting, elegant cinematic atmosphere, beautifully composed, no text.</textarea>
 <label>Negative prompt (editable)</label><textarea id="imageNegative" placeholder="blurry, duplicate subjects, bad anatomy, distorted objects, text, watermark">blurry, low quality, duplicate subjects, extra limbs, distorted instruments, text, logo, watermark</textarea>
-<div class="grid"><div><label>Reference influence / transformation strength</label><select id="imageStrength"><option value="0.32">Close to reference style</option><option value="0.45" selected>Balanced creative variation</option><option value="0.65">More original variation</option></select></div>
+<div class="grid"><div id="strengthContainer"><label>Image-to-image transformation strength (img2img mode only)</label><select id="imageStrength"><option value="0.32">Close to reference style</option><option value="0.45" selected>Balanced creative variation</option><option value="0.65">More original variation</option></select></div>
 <div><label>Thumbnail title (library label)</label><input id="aiThumbTitle" value="Peaceful Classical Music"></div></div>
 <p><button type="submit" id="aiThumbButton">Generate AI thumbnail from selected example</button></p>
 </form>
@@ -226,7 +228,7 @@ async function loadGallery(){
 }
 async function loadReferences(){
  const own=activeAccount,items=await read('/references?account_id='+encodeURIComponent(own));if(own!==activeAccount)return;
- $('referenceLibrary').innerHTML=items.length?items.map(r=>'<div class="status"><img class="thumb" src="/api/reference/'+encodeURIComponent(r.filename)+'?account_id='+encodeURIComponent(activeAccount)+'"><div>'+esc(r.title)+'</div><label><input type="radio" name="referencePick" value="'+esc(r.id)+'" '+(selectedReferenceId===r.id?'checked':'')+'> Use as image-to-image reference</label></div>').join(''):'Upload an example thumbnail to start.';
+ $('referenceLibrary').innerHTML=items.length?items.map(r=>'<div class="status"><img class="thumb" src="/api/reference/'+encodeURIComponent(r.filename)+'?account_id='+encodeURIComponent(activeAccount)+'"><div>'+esc(r.title)+'</div><label><input type="radio" name="referencePick" value="'+esc(r.id)+'" '+(selectedReferenceId===r.id?'checked':'')+'> Use as visual style reference</label></div>').join(''):'Upload an example thumbnail to start.';
  document.querySelectorAll('input[name=referencePick]').forEach(x=>x.onchange=()=>selectedReferenceId=x.value);
 }
 async function checkImageAi(){
@@ -248,6 +250,7 @@ async function analyzeReference(){
  if(activeAccount!==originalAccount||selectedReferenceId!==originalRef)throw Error('Channel or reference changed. Please retry.');
  $('imagePrompt').value=j.prompt;
  $('imageNegative').value=j.negative_prompt;
+ $('styleSummary').style.display='block';$('styleSummary').textContent='Reference style: '+(j.style_summary||'Analyzed by Ollama');
  return j;
 }
 $('suggestImagePrompt').onclick=async()=>{
@@ -256,12 +259,14 @@ $('suggestImagePrompt').onclick=async()=>{
  catch(e){$('imageAiMessage').textContent=e.message}
  finally{btn.disabled=false}
 };
+function updateImageMode(){const mode=$('imageMode').value;$('strengthContainer').style.display=mode==='img2img'?'block':'none';$('autoVisionPrompt').disabled=mode==='text';$('suggestImagePrompt').disabled=mode==='text';if(mode==='text')$('autoVisionPrompt').checked=false;else $('autoVisionPrompt').checked=true}
+$('imageMode').onchange=updateImageMode;updateImageMode();
 $('imageAiForm').onsubmit=async e=>{
- e.preventDefault();if(!selectedReferenceId){$('imageAiMessage').textContent='Choose a reference image first.';return}
+ e.preventDefault();const mode=$('imageMode').value;if(mode!=='text'&&!selectedReferenceId){$('imageAiMessage').textContent='Choose a reference image first.';return}
  $('aiThumbButton').disabled=true;$('imageAiMessage').textContent='Preparing thumbnail...';
- try{if($('autoVisionPrompt').checked){$('imageAiMessage').textContent='Ollama is analyzing the reference image...';await analyzeReference()}
- $('imageAiMessage').textContent='Sending Ollama-designed prompt to Forge to render artwork...';
- const j=await post('/thumbnail-ai/generate',{account_id:activeAccount,reference_id:selectedReferenceId,prompt:$('imagePrompt').value,negative_prompt:$('imageNegative').value,title:$('aiThumbTitle').value,strength:Number($('imageStrength').value)});
+ try{if(mode!=='text'&&$('autoVisionPrompt').checked){$('imageAiMessage').textContent='Ollama is analyzing the reference style and proposing a new scene...';await analyzeReference()}
+ $('imageAiMessage').textContent='Generating '+(mode==='style'?'original scene from style':mode==='text'?'text-only artwork':'image-to-image variation')+' in Forge...';
+ const j=await post('/thumbnail-ai/generate',{account_id:activeAccount,reference_id:selectedReferenceId,mode,prompt:$('imagePrompt').value,negative_prompt:$('imageNegative').value,title:$('aiThumbTitle').value,strength:Number($('imageStrength').value)});
  selectedThumbId=j.id;savedThumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('imageAiMessage').textContent='New AI thumbnail saved to library. Select it for your compilation.';await loadGallery();await refresh()}
  catch(e){$('imageAiMessage').textContent=e.message}finally{$('aiThumbButton').disabled=false}
 };
