@@ -4,6 +4,7 @@ from datetime import datetime
 import sqlite3, subprocess, shutil, uuid, threading, json
 from music_generation import check_connection, generate_one, base_url
 from channel_features import bp as channel_blueprint, initialize as initialize_channels, valid_account, compose_music_prompt, connect as channel_db, THUMBS
+from compilation_pipeline import bp as pipeline_blueprint, init as initialize_pipeline, configure_render, create_draft
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -24,6 +25,8 @@ with db() as conn:
     conn.execute("CREATE TABLE IF NOT EXISTS compilations (id TEXT PRIMARY KEY, title TEXT NOT NULL, filename TEXT NOT NULL, chapters TEXT, created TEXT NOT NULL)")
 initialize_channels()
 app.register_blueprint(channel_blueprint)
+initialize_pipeline()
+app.register_blueprint(pipeline_blueprint)
 
 def probe(path):
     output = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], text=True)
@@ -86,6 +89,7 @@ def video_file(compilation_id):
     with db() as conn:
         item = conn.execute("SELECT filename FROM compilations WHERE id=? AND account_id=?", (compilation_id,request.args.get("account_id","default"))).fetchone()
     if not item: return jsonify(error="Not found"), 404
+    if not item["filename"]: return jsonify(error="This compilation has not been rendered yet"), 409
     return send_from_directory(VIDEOS, item["filename"], as_attachment=True)
 
 @app.get("/api/tasks/<task_id>")
@@ -130,17 +134,25 @@ def render_job(task_id, track_ids, title, account_id="default", thumbnail=""):
         im.save(cover)
         if thumbnail:
             import re
-            if not re.fullmatch(r"[a-f0-9]{32}\\.png", thumbnail) or not (THUMBS / thumbnail).is_file():
+            if not re.fullmatch(r"[a-f0-9]{32}\.png", thumbnail) or not (THUMBS / thumbnail).is_file():
                 raise ValueError("Invalid saved thumbnail")
             cover = THUMBS / thumbnail
         output = VIDEOS / (task_id + ".mp4")
         jobs[task_id]["progress"] = "Encoding final video"
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-framerate", "1", "-i", str(cover), "-i", str(joined), "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-r", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(output)], check=True)
         with db() as conn:
-            conn.execute("INSERT INTO compilations (id,title,filename,chapters,created,account_id,thumbnail) VALUES (?,?,?,?,?,?,?)", (task_id, title, output.name, "\n".join(chapters), datetime.now().isoformat(), account_id, thumbnail))
+            existing=conn.execute("SELECT id FROM compilations WHERE id=? AND account_id=?",(task_id,account_id)).fetchone()
+            if existing:
+                conn.execute("UPDATE compilations SET filename=?, chapters=?, thumbnail=?, status='ready' WHERE id=? AND account_id=?",
+                             (output.name, "\n".join(chapters), thumbnail, task_id, account_id))
+            else:
+                conn.execute("INSERT INTO compilations (id,title,filename,chapters,created,account_id,thumbnail,status,track_ids,duration) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                             (task_id,title,output.name,"\n".join(chapters),datetime.now().isoformat(),account_id,thumbnail,"ready",json.dumps(track_ids),seconds))
         jobs[task_id] = {"status": "done", "id": task_id}
     except Exception as error:
         jobs[task_id] = {"status": "error", "error": str(error)}
+        with db() as conn:
+            conn.execute("UPDATE compilations SET status='draft' WHERE id=? AND status='rendering'",(task_id,))
     finally:
         shutil.rmtree(VIDEOS / (task_id + "_parts"), ignore_errors=True)
 
@@ -230,12 +242,13 @@ def generation_worker(job_id, payload):
         job["status"] = "done" if not job["failures"] else ("partial" if job["completed"] else "error")
         job["progress"] = "Batch finished"
         if payload.get("auto_compile") and generated_ids:
-            compilation_id = uuid.uuid4().hex
-            jobs[compilation_id] = {"status":"queued"}
             name = payload.get("compilation_title") or account["name"] + " - Music Compilation"
-            job["compilation_task_id"] = compilation_id
-            threading.Thread(target=render_job, args=(compilation_id,generated_ids,name,payload["account_id"],payload.get("thumbnail","")),daemon=True).start()
-            job["progress"] = "Batch finished; video rendering started"
+            with db() as conn:
+                song_map={r["id"]:dict(r) for r in conn.execute(
+                    "SELECT id,title,duration FROM songs WHERE account_id=?",(payload["account_id"],))}
+            draft=create_draft(account,[song_map[i] for i in generated_ids],name,"generated")
+            job["draft_id"]=draft["id"]
+            job["progress"]="Batch finished; compilation draft created. Choose artwork before rendering."
     except Exception as error:
         job["status"] = "error"
         job["progress"] = str(error)
@@ -285,6 +298,8 @@ def generate():
         generation_lock.release()
         raise
     return jsonify(job_id=job_id), 202
+
+configure_render(render_job,jobs)
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5050, debug=False)
