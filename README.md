@@ -53,3 +53,29 @@ ACE-Step installation, model weights, and compatible GPU resources are not inclu
 **Important:** The local Flask server has no authentication; run it only on `127.0.0.1`. Your email is metadata only. No YouTube login/upload is included. Generated audio/video, database, artwork and local AI models remain in `data/` and are not synchronized by Git. Existing local data is preserved by non-destructive migrations. The ACE-Step API integration and local Ollama/thumbnail integration have not yet been end-to-end tested on your Windows PC.
 
 **Suggested first test:** keep ACE-Step running, run `ollama pull llama3.2:3b`, restart Flask, add "Classical" account with your email, preview a unique AI prompt, generate one 60-second instrumental track, create an image in Thumbnail Studio and render a short compilation. Once this succeeds, scale to 10 tracks.
+
+## New workflow: songs -> draft compilation -> thumbnail -> final MP4
+
+The **Song Library** belongs to the selected channel. Generate songs with ACE-Step or import MP3/WAV tracks. In **Compilations**, either:
+- Select songs in the Song Library, then click "Save draft from selected library tracks"; or
+- Click "Pick random songs and create draft" and set a target of 60 minutes. Random selection does not repeat songs. The reported runtime may differ from exactly 60 minutes if the library cannot fill it.
+
+A draft is saved in SQLite with track order and chapter timestamps. Drafts do not generate video until the next step.
+
+### Free reference-guided AI thumbnails (separate installation)
+
+This implementation uses **Stable Diffusion WebUI Forge**, running locally with its AUTOMATIC1111-compatible REST API. Forge and a **compatible image checkpoint/model** must be installed separately; the software does not download Forge or its model automatically. On the NVIDIA RTX 4060 Ti 8 GB, start with a lightweight SD 1.5 checkpoint. Avoid running Forge image generation simultaneously with ACE-Step song generation if VRAM is tight.
+
+Official Forge repository: https://github.com/lllyasviel/stable-diffusion-webui-forge
+
+Windows one-click setup: download the official Forge archive linked in its README, extract it, run `update.bat`, and run `run.bat`. Enable the API by launching with `--api`. For the source checkout, edit `webui-user.bat` to contain `set COMMANDLINE_ARGS=--api` and launch `webui-user.bat`. If using the one-click package, its `run.bat` launcher needs to pass `--api` to the web UI (for example the package's webui-user launch configuration); check that `http://127.0.0.1:7860/sdapi/v1/options` responds before generating. Add/select an appropriate checkpoint in Forge.
+
+In **Thumbnail Studio**, upload example art (you must own it or have permission to use it), save examples to the reference library, choose **one** example image and describe the new artwork. The local Stable Diffusion image-to-image API uses the reference and your prompt to generate a new 16:9 image. It is not a pixel-perfect style clone and currently uses one selected reference per generation. For a lower-resource fallback, use the existing free template-based thumbnail designer. Both methods save results to each channel's **Thumbnail Library**.
+
+Then, in **Compilations**, choose a saved thumbnail and click **Render video with selected thumbnail**. FFmpeg displays that exact image throughout the entire MP4 and joins the tracks in the saved draft order. The image is also downloadable as a YouTube thumbnail PNG.
+
+The new workflow is **local-first**, with no per-image/song API bills. Storage, electricity, GPU and any third-party licensing costs still apply. Do not use other channels' artwork or copyrighted recordings without rights. AI output and account separation are not a substitute for YouTube ownership, disclosure, or monetization rules.
+
+### Status / migration
+
+Previous locally saved songs and compilations remain in SQLite; migration only adds columns and new tables. Old completed compilations are still downloadable. Existing channels, generated songs and older template artwork files are not deleted. Current implementation is committed but requires end-to-end testing on your Windows PC with ACE-Step, Ollama and Forge.
