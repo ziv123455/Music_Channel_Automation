@@ -6,3 +6,6 @@ __pycache__/
 .pytest_cache/
 data/*
 !data/.gitkeep
+
+# Local AI engines and model weights (folder junctions are local only)
+tools/
