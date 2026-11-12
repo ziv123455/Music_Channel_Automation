@@ -292,42 +292,45 @@ def suggest_thumbnail_prompt():
     image_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
     direction = str(data.get("direction") or "").strip()[:600]
     instruction = (
-        "You are an expert art director writing prompts for Stable Diffusion 1.5 "
-        "image-to-image YouTube music thumbnails. Analyze the ATTACHED IMAGE VISUALLY. "
-        "Identify the actual subjects, object count, composition, medium, lighting, "
-        "palette, mood and camera framing. Preserve the core visual theme, but invent "
-        "a distinct original scene rather than duplicating the image. "
-        "Do not hallucinate a piano, person or other object unless it is visible or "
-        "the user's creative direction explicitly asks for it. "
-        "Prefer one clear focal point, physically plausible anatomy and objects, "
-        "no duplicated figures, polished thumbnail-friendly 16:9 framing. "
-        "The generated image must contain no text. "
-        "Use the channel genre as mood context rather than assuming objects. "
-        "Reply ONLY with a JSON object with two string keys: "
-        "'prompt' (rich, specific, comma-separated English visual description, "
-        "max 110 words) and 'negative_prompt' (comma-separated quality defects, "
-        "max 65 words). No markdown. "
+        "You are an expert art director for ORIGINAL YouTube music thumbnail artwork. "
+        "Look at the attached reference image and analyze its artistic medium, era, "
+        "palette, lighting, mood, visual texture and framing. "
+        "Use its STYLE as inspiration, NOT its exact scene, figures, poses, "
+        "object placements or iconic composition. Design a DISTINCT original "
+        "scene fitting the user's channel and creative direction. "
+        "For a classical music channel, music-related subjects such as a large "
+        "grand piano or concert hall can be appropriate when requested. "
+        "Create a polished SDXL / Juggernaut XL txt2img prompt. "
+        "Require one large unmistakable focal subject, readable at small mobile "
+        "thumbnail size, realistic object geometry, clear 16:9 cinematic composition, "
+        "rich intentional lighting, no text in the AI artwork. "
+        "Do not describe the reference as the intended generated image. "
+        "Return ONLY JSON with exactly three strings: "
+        "prompt (50-110 words describing your NEW image), "
+        "negative_prompt (visual defects and unwanted elements, <=65 words), "
+        "style_summary (1-2 sentences explaining the reference's visual style). "
         f"Channel genre: {account.get('genre', 'Music')}. "
-        f"Channel creative direction: {str(account.get('description') or '')[:300]}. "
-        f"User design direction: {direction or 'Original artwork inspired by the reference'}."
+        f"Channel direction: {str(account.get('description') or '')[:300]}. "
+        f"Requested new artwork: {direction or 'Original thumbnail influenced by the reference style'}."
     )
     try:
         response = requests.post(
             OLLAMA_API + "/api/generate",
             json={"model": VISION_MODEL, "prompt": instruction,
                   "images": [image_b64], "stream": False, "format": "json",
-                  "options": {"temperature": 0.4, "num_predict": 280}},
+                  "options": {"temperature": 0.5, "num_predict": 380}, "keep_alive": 0},
             timeout=240
         )
         response.raise_for_status()
         result = json.loads(response.json().get("response") or "{}")
         prompt = str(result.get("prompt") or "").strip()[:950]
         negative = str(result.get("negative_prompt") or "").strip()[:500]
+        summary = str(result.get("style_summary") or "").strip()[:500]
         if len(prompt) < 35:
             raise ValueError("Vision model returned an incomplete image prompt.")
         if not negative:
             negative = "blurry, distorted objects, duplicate subjects, extra limbs, text, watermark, logo"
-        return jsonify(prompt=prompt, negative_prompt=negative, model=VISION_MODEL)
+        return jsonify(prompt=prompt, negative_prompt=negative, style_summary=summary, model=VISION_MODEL)
     except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as exc:
         return jsonify(error=(
             f"Ollama vision analysis failed ({VISION_MODEL}). "
@@ -337,50 +340,110 @@ def suggest_thumbnail_prompt():
 
 @bp.post("/thumbnail-ai/generate")
 def generate_art():
-    data=request.get_json(silent=True) or {}
-    account=current_account(data)
-    if not account:return jsonify(error="Unknown channel"),404
-    ref_id=str(data.get("reference_id") or "")
-    with connect() as cn:
-        ref=cn.execute("SELECT * FROM thumbnail_references WHERE id=? AND account_id=?",
-                       (ref_id,account["id"])).fetchone()
-    if not ref:return jsonify(error="Select an example thumbnail first."),400
-    original_path=REFERENCES/ref["filename"]
-    if not original_path.is_file():return jsonify(error="Reference image is missing."),404
-    description=str(data.get("prompt") or "").strip()[:800]
-    title=str(data.get("title") or "AI Music Mix")[:100]
-    negative=str(data.get("negative_prompt") or "").strip()[:650]
-    if not description:return jsonify(error="Describe the desired thumbnail."),400
+    data = request.get_json(silent=True) or {}
+    account = current_account(data)
+    if not account:
+        return jsonify(error="Unknown channel"), 404
+
+    mode = str(data.get("mode") or "style").strip()
+    if mode not in ("style", "img2img", "text"):
+        return jsonify(error="Invalid thumbnail generation mode."), 400
+
+    ref_id = str(data.get("reference_id") or "")
+    reference_path = None
+    if mode != "text":
+        with connect() as cn:
+            ref = cn.execute(
+                "SELECT filename FROM thumbnail_references WHERE id=? AND account_id=?",
+                (ref_id, account["id"])
+            ).fetchone()
+        if not ref:
+            return jsonify(error="Select a saved reference image first."), 400
+        reference_path = REFERENCES / ref["filename"]
+        if not reference_path.is_file():
+            return jsonify(error="Reference image is missing."), 404
+
+    description = str(data.get("prompt") or "").strip()[:1200]
+    negative = str(data.get("negative_prompt") or "").strip()[:650]
+    title = str(data.get("title") or "AI Music Thumbnail").strip()[:100]
+    if not description:
+        return jsonify(error="Enter a thumbnail design prompt."), 400
+
+    negative_base = (
+        "blurry, duplicate people, duplicate objects, malformed anatomy, "
+        "distorted instruments, warped perspective, bad composition, low quality, "
+        "text, watermark, logo, signature"
+    )
+    payload = {
+        "prompt": description + ", original professional cinematic music thumbnail artwork, "
+                  "clear prominent focal point, wide 16:9 composition, no text",
+        "negative_prompt": (negative + ", " + negative_base).strip(", "),
+        "width": 1024, "height": 576, "steps": 30,
+        "cfg_scale": 5, "sampler_name": "DPM++ 2M",
+        "scheduler": "Karras", "batch_size": 1, "n_iter": 1,
+        "restore_faces": False, "save_images": False,
+        "send_images": True
+    }
+
+    if mode == "img2img":
+        try:
+            strength = float(data.get("strength", 0.45))
+        except (TypeError, ValueError):
+            return jsonify(error="Invalid img2img transformation strength."), 400
+        if not 0.2 <= strength <= 0.95:
+            return jsonify(error="Strength must be between 0.2 and 0.95."), 400
+        with Image.open(reference_path) as original:
+            base = ImageOps.fit(original.convert("RGB"), (1024, 576))
+        buffer = io.BytesIO()
+        base.save(buffer, format="PNG")
+        payload["init_images"] = [base64.b64encode(buffer.getvalue()).decode("ascii")]
+        payload["denoising_strength"] = strength
+        endpoint = "/sdapi/v1/img2img"
+    else:
+        endpoint = "/sdapi/v1/txt2img"
+
     try:
-        strength=float(data.get("strength",0.65))
-    except (TypeError,ValueError):
-        return jsonify(error="Invalid creativity strength."),400
-    if not .2<=strength<=.95:return jsonify(error="Strength must be 0.2 to 0.95"),400
-    base=ImageOps.fit(Image.open(original_path).convert("RGB"),(1024,576))
-    buffer=io.BytesIO()
-    base.save(buffer,format="PNG")
-    encoded=base64.b64encode(buffer.getvalue()).decode("ascii")
-    # Image-to-image: guided by one selected example. Avoid exact replication.
-    payload={"init_images":["data:image/png;base64,"+encoded],
-             "prompt":description+", original professional cinematic music cover artwork, beautiful lighting, wide composition, no watermark",
-             "negative_prompt":negative + ", blurry, low quality, distorted objects, duplicate person, extra limbs, text, watermark, logo, signature",
-             "denoising_strength":strength,"width":1024,"height":576,
-             "steps":28,"cfg_scale":6.5,"sampler_name":"DPM++ 2M","batch_size":1,"n_iter":1}
-    try:
-        response=requests.post(IMAGE_API+"/sdapi/v1/img2img",json=payload,timeout=900)
+        # Only request Juggernaut if Forge actually lists that checkpoint.
+        # Otherwise keep Forge's selected model and report which was used.
+        model_response = requests.get(IMAGE_API + "/sdapi/v1/sd-models", timeout=15)
+        model_response.raise_for_status()
+        models = model_response.json()
+        preferred = next(
+            (m for m in models if "juggernaut-xl_v9_rundiffusionphoto_v2" in
+             str(m.get("filename") or m.get("title") or "").lower()),
+            None
+        )
+        if preferred:
+            payload["override_settings"] = {
+                "sd_model_checkpoint": preferred.get("title") or preferred.get("model_name")
+            }
+            payload["override_settings_restore_afterwards"] = True
+
+        response = requests.post(IMAGE_API + endpoint, json=payload, timeout=900)
         response.raise_for_status()
-        images=response.json().get("images") or []
-        if not images:raise ValueError("Image AI returned no images.")
-        result=images[0].split(",",1)[-1]
-        out=Image.open(io.BytesIO(base64.b64decode(result))).convert("RGB")
-        out=out.resize((1280,720),Image.Resampling.LANCZOS)
-    except (requests.RequestException,ValueError,OSError) as exc:
-        return jsonify(error="Local image AI failed. Start Stable Diffusion WebUI Forge with --api on port 7860. "+str(exc)[:220]),503
-    filename=uuid.uuid4().hex+".png"
-    out.save(THUMBS/filename,optimize=True)
-    thumb_id=uuid.uuid4().hex
+        images = response.json().get("images") or []
+        if not images:
+            raise ValueError("Forge returned no image.")
+        image_bytes = base64.b64decode(images[0].split(",", 1)[-1], validate=True)
+        with Image.open(io.BytesIO(image_bytes)) as generated:
+            out = generated.convert("RGB")
+            out = ImageOps.fit(out, (1280, 720), method=Image.Resampling.LANCZOS)
+    except (requests.RequestException, ValueError, OSError, KeyError) as exc:
+        return jsonify(error=(
+            "Forge thumbnail generation failed. Check Forge at port 7860, "
+            "confirm Juggernaut XL is installed, and try again. "
+            + str(exc)[:280]
+        )), 503
+
+    filename = uuid.uuid4().hex + ".png"
+    out.save(THUMBS / filename, optimize=True)
+    thumb_id = uuid.uuid4().hex
     with connect() as cn:
         cn.execute("INSERT INTO thumbnail_library VALUES (?,?,?,?,?,?,?)",
-                   (thumb_id,account["id"],filename,title,"ai_img2img",ref_id,datetime.now().isoformat()))
-        cn.execute("UPDATE accounts SET thumbnail=? WHERE id=?",(filename,account["id"]))
-    return jsonify(id=thumb_id,filename=filename,url="/api/thumbnail/"+filename),201
+                   (thumb_id, account["id"], filename, title,
+                    "ai_" + mode, ref_id if mode != "text" else None,
+                    datetime.now().isoformat()))
+        cn.execute("UPDATE accounts SET thumbnail=? WHERE id=?",
+                   (filename, account["id"]))
+    return jsonify(id=thumb_id, filename=filename, url="/api/thumbnail/" + filename,
+                   mode=mode, model=(preferred or {}).get("title") or "Forge selected checkpoint"), 201
