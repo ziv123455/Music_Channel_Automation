@@ -1,0 +1,284 @@
+"""Finished MP3 mixes and repeat-to-duration thumbnail videos."""
+from datetime import datetime
+from pathlib import Path
+import json
+import shutil
+import sqlite3
+import subprocess
+import threading
+import uuid
+
+from flask import Blueprint, jsonify, request, send_from_directory
+from channel_features import DB, THUMBS, valid_account
+
+bp = Blueprint("finished_media", __name__, url_prefix="/api")
+DATA = DB.parent
+SONGS = DATA / "songs"
+MP3S = DATA / "finished_mp3s"
+OUTPUT_VIDEOS = DATA / "finished_videos"
+MP3S.mkdir(parents=True, exist_ok=True)
+OUTPUT_VIDEOS.mkdir(parents=True, exist_ok=True)
+jobs = {}
+lock = threading.Lock()
+
+
+def connect():
+    cn = sqlite3.connect(DB, timeout=20)
+    cn.row_factory = sqlite3.Row
+    cn.execute("PRAGMA busy_timeout=20000")
+    return cn
+
+
+def initialize():
+    with connect() as cn:
+        cn.execute("""CREATE TABLE IF NOT EXISTS finished_mp3s (
+            id TEXT PRIMARY KEY, account_id TEXT NOT NULL, title TEXT NOT NULL,
+            filename TEXT NOT NULL, duration REAL NOT NULL, track_ids TEXT NOT NULL,
+            crossfade REAL NOT NULL, created TEXT NOT NULL)""")
+        cn.execute("""CREATE TABLE IF NOT EXISTS finished_videos (
+            id TEXT PRIMARY KEY, account_id TEXT NOT NULL, title TEXT NOT NULL,
+            filename TEXT NOT NULL, mp3_id TEXT NOT NULL, thumbnail_id TEXT NOT NULL,
+            duration REAL NOT NULL, created TEXT NOT NULL)""")
+
+
+def current_account(data=None):
+    data = data or {}
+    return valid_account(data.get("account_id") or request.args.get("account_id", "default"))
+
+
+def safe_title(value, default):
+    return str(value or default).strip()[:120] or default
+
+
+def new_job(kind, account_id, output_id):
+    job_id = uuid.uuid4().hex
+    with lock:
+        jobs[job_id] = {"id": job_id, "kind": kind, "account_id": account_id,
+                        "output_id": output_id, "status": "queued", "progress": "Queued"}
+    return job_id
+
+
+def job_change(job_id, **fields):
+    with lock:
+        jobs[job_id].update(fields)
+
+
+@bp.get("/finished-media/jobs")
+def list_jobs():
+    account = current_account()
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    with lock:
+        result = [dict(j) for j in jobs.values() if j["account_id"] == account["id"]]
+    return jsonify(result[-40:][::-1])
+
+
+@bp.get("/finished-mp3s")
+def list_mp3s():
+    account = current_account()
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    with connect() as cn:
+        result = [dict(r) for r in cn.execute(
+            "SELECT * FROM finished_mp3s WHERE account_id=? ORDER BY created DESC",
+            (account["id"],))]
+    return jsonify(result)
+
+
+@bp.get("/finished-mp3s/<item_id>/audio")
+def get_mp3(item_id):
+    account = current_account()
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    with connect() as cn:
+        item = cn.execute("SELECT filename FROM finished_mp3s WHERE id=? AND account_id=?",
+                          (item_id, account["id"])).fetchone()
+    if not item:
+        return jsonify(error="Finished MP3 not found."), 404
+    return send_from_directory(MP3S, item["filename"], as_attachment=request.args.get("download") == "1")
+
+
+def build_mp3(job_id, account_id, output_id, title, tracks, crossfade):
+    output = MP3S / (output_id + ".mp3")
+    try:
+        job_change(job_id, status="running", progress="Joining tracks with smooth transitions")
+        args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        for track in tracks:
+            source = SONGS / track["filename"]
+            if not source.is_file():
+                raise FileNotFoundError("Missing audio file: " + track["title"])
+            args.extend(["-i", str(source)])
+        filters = []
+        for index in range(len(tracks)):
+            filters.append(
+                f"[{index}:a:0]aresample=44100,"
+                "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+                f"asetpts=PTS-STARTPTS[a{index}]"
+            )
+        if len(tracks) == 1:
+            output_label = "[a0]"
+        elif crossfade > 0:
+            previous = "[a0]"
+            for index in range(1, len(tracks)):
+                label = f"[mix{index}]"
+                filters.append(
+                    f"{previous}[a{index}]acrossfade=d={crossfade:.3f}:c1=tri:c2=tri{label}"
+                )
+                previous = label
+            output_label = previous
+        else:
+            filters.append("".join(f"[a{i}]" for i in range(len(tracks))) +
+                           f"concat=n={len(tracks)}:v=0:a=1[mix]")
+            output_label = "[mix]"
+        args.extend(["-filter_complex", ";".join(filters), "-map", output_label,
+                     "-vn", "-codec:a", "libmp3lame", "-b:a", "192k", str(output)])
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=7200)
+        if proc.returncode != 0:
+            raise RuntimeError("FFmpeg audio mix failed: " + proc.stderr[-1100:])
+        duration = float(subprocess.check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(output)], text=True).strip())
+        if duration <= 0:
+            raise RuntimeError("Finished MP3 is empty.")
+        with connect() as cn:
+            cn.execute("""INSERT INTO finished_mp3s
+                (id,account_id,title,filename,duration,track_ids,crossfade,created)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (output_id,account_id,title,output.name,duration,
+                 json.dumps([r["id"] for r in tracks]),crossfade,datetime.now().isoformat()))
+        job_change(job_id, status="done", progress="Finished MP3 saved", duration=duration)
+    except Exception as exc:
+        output.unlink(missing_ok=True)
+        job_change(job_id, status="error", progress=str(exc)[:1400])
+
+
+@bp.post("/finished-mp3s")
+def create_mp3():
+    data = request.get_json(silent=True) or {}
+    account = current_account(data)
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    ids = data.get("track_ids")
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 100 or any(
+        not isinstance(i, str) for i in ids
+    ) or len(set(ids)) != len(ids):
+        return jsonify(error="Select 1-100 distinct songs in playback order."), 400
+    try:
+        crossfade = float(data.get("crossfade", 3))
+    except (TypeError, ValueError):
+        return jsonify(error="Invalid transition length."), 400
+    if not 0 <= crossfade <= 12:
+        return jsonify(error="Choose 0-12 seconds of crossfade."), 400
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return jsonify(error="Install FFmpeg and ffprobe first."), 503
+    with connect() as cn:
+        rows = cn.execute(
+            "SELECT id,title,filename,duration FROM songs WHERE account_id=?",
+            (account["id"],)).fetchall()
+    library = {r["id"]: dict(r) for r in rows}
+    if any(i not in library for i in ids):
+        return jsonify(error="One or more songs are missing from this channel."), 400
+    tracks = [library[i] for i in ids]
+    if len(tracks) > 1 and crossfade >= min(t["duration"] for t in tracks):
+        return jsonify(error="Crossfade must be shorter than every selected song."), 400
+    output_id = uuid.uuid4().hex
+    title = safe_title(data.get("title"), "Finished Music Mix")
+    job_id = new_job("mp3", account["id"], output_id)
+    threading.Thread(target=build_mp3,
+                     args=(job_id,account["id"],output_id,title,tracks,crossfade),
+                     daemon=True).start()
+    return jsonify(job_id=job_id, id=output_id), 202
+
+
+@bp.get("/finished-videos")
+def list_videos():
+    account = current_account()
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    with connect() as cn:
+        result = [dict(r) for r in cn.execute(
+            "SELECT * FROM finished_videos WHERE account_id=? ORDER BY created DESC",
+            (account["id"],))]
+    return jsonify(result)
+
+
+@bp.get("/finished-videos/<item_id>/video")
+def get_video(item_id):
+    account = current_account()
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    with connect() as cn:
+        item = cn.execute("SELECT filename FROM finished_videos WHERE id=? AND account_id=?",
+                          (item_id, account["id"])).fetchone()
+    if not item:
+        return jsonify(error="Video not found."), 404
+    return send_from_directory(OUTPUT_VIDEOS, item["filename"], as_attachment=True)
+
+
+def render_video(job_id, account_id, output_id, title, mp3, thumb, duration):
+    output = OUTPUT_VIDEOS / (output_id + ".mp4")
+    try:
+        audio_path = MP3S / mp3["filename"]
+        image_path = THUMBS / thumb["filename"]
+        if not audio_path.is_file() or not image_path.is_file():
+            raise FileNotFoundError("MP3 or thumbnail file is missing.")
+        job_change(job_id, status="running",
+                   progress="Rendering thumbnail-backed video with repeating MP3 audio")
+        args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-loop", "1", "-framerate", "1", "-i", str(image_path),
+                "-stream_loop", "-1", "-i", str(audio_path),
+                "-t", f"{duration:.3f}", "-map", "0:v:0", "-map", "1:a:0",
+                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                       "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
+                "-r", "24", "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(output)]
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=14400)
+        if proc.returncode != 0:
+            raise RuntimeError("FFmpeg video render failed: " + proc.stderr[-1100:])
+        if not output.is_file() or output.stat().st_size == 0:
+            raise RuntimeError("No rendered video was created.")
+        with connect() as cn:
+            cn.execute("""INSERT INTO finished_videos
+                (id,account_id,title,filename,mp3_id,thumbnail_id,duration,created)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (output_id,account_id,title,output.name,mp3["id"],thumb["id"],
+                 duration,datetime.now().isoformat()))
+        job_change(job_id, status="done", progress="Finished video saved")
+    except Exception as exc:
+        output.unlink(missing_ok=True)
+        job_change(job_id, status="error", progress=str(exc)[:1400])
+
+
+@bp.post("/finished-videos")
+def create_video():
+    data = request.get_json(silent=True) or {}
+    account = current_account(data)
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    try:
+        duration = float(data.get("duration_seconds"))
+    except (TypeError, ValueError):
+        return jsonify(error="Enter a valid video duration."), 400
+    if not 1 <= duration <= 86400:
+        return jsonify(error="Video duration must be between 1 second and 24 hours."), 400
+    if not shutil.which("ffmpeg"):
+        return jsonify(error="FFmpeg is required to render video."), 503
+    with connect() as cn:
+        mp3_row = cn.execute("SELECT * FROM finished_mp3s WHERE id=? AND account_id=?",
+                            (data.get("mp3_id"), account["id"])).fetchone()
+        thumb_row = cn.execute("SELECT * FROM thumbnail_library WHERE id=? AND account_id=?",
+                              (data.get("thumbnail_id"), account["id"])).fetchone()
+    if not mp3_row or not thumb_row:
+        return jsonify(error="Choose a finished MP3 and saved thumbnail for this channel."), 400
+    mp3 = dict(mp3_row)
+    thumb = dict(thumb_row)
+    if duration <= mp3["duration"]:
+        return jsonify(error="Video duration must be longer than the selected MP3."), 400
+    output_id = uuid.uuid4().hex
+    title = safe_title(data.get("title"), "Music Video")
+    job_id = new_job("video", account["id"], output_id)
+    threading.Thread(target=render_video,
+                     args=(job_id, account["id"], output_id, title, mp3, thumb, duration),
+                     daemon=True).start()
+    return jsonify(job_id=job_id, id=output_id), 202
