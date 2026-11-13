@@ -338,11 +338,15 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
                 (output_id,account_id,title,output.name,mp3["id"],thumb["id"],
                  duration,datetime.now().isoformat(),cover_type,int(visualizer),
                  particles,particle_intensity))
-        job_change(job_id, status="done", progress="Finished video saved")
+        job_change(job_id, status="done", progress="Finished video saved", percent=100.0,
+                   rendered_seconds=duration, total_seconds=duration,
+                   elapsed_seconds=round(time.monotonic() - render_start, 1), eta_seconds=0)
     except Exception as exc:
         output.unlink(missing_ok=True)
         job_change(job_id, status="error", progress=str(exc)[:1400])
     finally:
+        if progress_path is not None:
+            progress_path.unlink(missing_ok=True)
         if particle_dir is not None:
             shutil.rmtree(particle_dir, ignore_errors=True)
 
