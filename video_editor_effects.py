@@ -10,14 +10,16 @@ DEFAULTS = {
     "particles": {"x": 50, "y": 50, "size": 100, "opacity": 85,
                   "speed": 100, "brightness": 100, "blur": 0, "color": "#ffffff"},
     "ring": {"x": 50, "y": 50, "size": 28, "opacity": 90,
-             "color": "#ffffff"},
+             "color": "#ffffff", "sensitivity": 300, "glow": 80, "glow_blur": 14},
+    "export": {"quality": "high"},
 }
 LIMITS = {
     "zoom": (0.5, 3), "x": (0, 100), "y": (0, 100),
     "brightness": (0, 200), "contrast": (0, 200), "saturation": (0, 200),
     "sharpness": (0, 300), "blur": (0, 15), "warmth": (-100, 100),
     "hue": (-180, 180), "vignette": (0, 100), "size": (10, 180),
-    "opacity": (0, 100), "speed": (25, 300)
+    "opacity": (0, 100), "speed": (25, 300),
+    "sensitivity": (100, 500), "glow": (0, 100), "glow_blur": (0, 35)
 }
 
 def normalize_editor(data):
@@ -31,7 +33,11 @@ def normalize_editor(data):
         result[section] = {}
         for name, default in fields.items():
             raw = incoming.get(name, default)
-            if name == "fit":
+            if name == "quality":
+                if raw not in ("balanced", "high", "ultra"):
+                    raise ValueError("Export quality must be balanced, high or ultra.")
+                value = raw
+            elif name == "fit":
                 if raw not in ("cover", "contain"):
                     raise ValueError("Cover fit must be cover or contain.")
                 value = raw
