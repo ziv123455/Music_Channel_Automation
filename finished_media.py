@@ -2,6 +2,7 @@
 from datetime import datetime
 from pathlib import Path
 import json
+import io
 import shutil
 import sqlite3
 import subprocess
@@ -10,7 +11,7 @@ import tempfile
 import time
 import uuid
 
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, jsonify, request, send_from_directory, send_file
 from channel_features import DB, THUMBS, valid_account
 from particle_effects import build_particle_frames, STYLES, LEVELS, FPS
 from video_editor_effects import normalize_editor, cover_frame
@@ -228,6 +229,41 @@ def get_video(item_id):
     if not item:
         return jsonify(error="Video not found."), 404
     return send_from_directory(OUTPUT_VIDEOS, item["filename"], as_attachment=True)
+
+
+@bp.post("/finished-media/preview-cover")
+def preview_edited_cover():
+    data = request.get_json(silent=True) or {}
+    account = current_account(data)
+    if not account:
+        return jsonify(error="Invalid channel"), 404
+    cover_type = str(data.get("cover_type") or "")
+    if cover_type not in ("thumbnail", "reference"):
+        return jsonify(error="Select a valid cover source."), 400
+    table = "thumbnail_library" if cover_type == "thumbnail" else "thumbnail_references"
+    with connect() as cn:
+        cover = cn.execute(
+            "SELECT filename FROM " + table + " WHERE account_id=? AND id=?",
+            (account["id"], data.get("thumbnail_id"))
+        ).fetchone()
+    if not cover:
+        return jsonify(error="Cover not found for this channel."), 404
+    path = (THUMBS if cover_type == "thumbnail" else DATA / "references") / cover["filename"]
+    if not path.is_file():
+        return jsonify(error="Cover file is missing."), 404
+    try:
+        settings = normalize_editor(data.get("editor_settings") or {})
+        opts = dict(settings["cover"])
+        # Match the proportional blur of the 1080p export at half resolution.
+        opts["blur"] *= 0.5
+        with tempfile.TemporaryDirectory(prefix="music_video_cover_preview_") as folder:
+            rendered = Path(folder) / "cover.png"
+            cover_frame(path, rendered, opts, size=(960, 540))
+            contents = rendered.read_bytes()
+        return send_file(io.BytesIO(contents), mimetype="image/png",
+                         download_name="video-cover-preview.png")
+    except (ValueError, OSError) as exc:
+        return jsonify(error=str(exc)), 400
 
 
 def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer, particles, particle_intensity, editor_settings):
