@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import threading
 import tempfile
+import time
 import uuid
 
 from flask import Blueprint, jsonify, request, send_from_directory
@@ -229,12 +230,15 @@ def get_video(item_id):
 def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer, particles, particle_intensity):
     output = OUTPUT_VIDEOS / (output_id + ".mp4")
     particle_dir = None
+    progress_path = None
     try:
         audio_path = MP3S / mp3["filename"]
         image_path = (THUMBS if cover_type == "thumbnail" else DATA / "references") / thumb["filename"]
         if not audio_path.is_file() or not image_path.is_file():
             raise FileNotFoundError("MP3 or thumbnail file is missing.")
-        job_change(job_id, status="running", progress="Preparing music video effects")
+        job_change(job_id, status="running", progress="Preparing music video effects",
+                   percent=0.0, rendered_seconds=0.0, total_seconds=duration,
+                   elapsed_seconds=0.0, eta_seconds=None, speed=0.0)
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-loop", "1", "-framerate", "24", "-i", str(image_path),
                 "-stream_loop", "-1", "-i", str(audio_path)]
