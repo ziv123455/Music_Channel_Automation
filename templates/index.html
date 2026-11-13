@@ -174,6 +174,21 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 </section>
 <section class="panel"><h2>Rendering progress</h2><p class="muted">The bar follows FFmpeg&#39;s encoded video timestamp and updates approximately every six seconds. Keep the rendering application running.</p><div id="videoRenderProgress">No video render is currently active.</div></section>
 <section class="panel"><h2>Finished Videos</h2><div id="finishedVideoLibrary">Loading finished videos...</div></section>
+<section class="panel">
+<h2>YouTube Title, Description &amp; SEO</h2>
+<p class="muted">Generate metadata for one of your completed videos using local Ollama. Edit the results and copy the title, description, keywords, hashtags or YouTube tags directly into YouTube Studio. Generated content is saved to this channel's video.</p>
+<label for="metadataVideo">Finished video</label><select id="metadataVideo"><option value="">Choose a finished video</option></select>
+<label for="metadataFocus">Optional SEO direction</label><input type="text" id="metadataFocus" maxlength="500" placeholder="e.g. peaceful classical piano for studying, sleeping and reading">
+<div class="row" style="margin-top:12px"><button type="button" id="metadataGenerate">Generate full YouTube description + tags</button><button type="button" id="metadataSave" class="tab">Save edits</button><span class="muted" id="metadataStatus"></span></div>
+<label for="metadataTitle">YouTube title (100 characters max)</label><input type="text" maxlength="100" id="metadataTitle" placeholder="Your YouTube video title">
+<label for="metadataDescription">Full description (including hashtags)</label><textarea id="metadataDescription" rows="13" style="min-height:280px" placeholder="Your video description will appear here after generation..."></textarea>
+<div class="row"><button type="button" class="tab" id="metadataCopyDescription">Copy description</button><button type="button" class="tab" id="metadataCopyTitle">Copy title</button></div>
+<label for="metadataKeywords">SEO keywords (comma-separated)</label><textarea id="metadataKeywords" rows="3" style="min-height:75px" placeholder="Classical music, music for study, peaceful instrumentals"></textarea>
+<label for="metadataTags">YouTube tags (comma-separated, 500 characters max)</label><textarea id="metadataTags" rows="3" style="min-height:75px" placeholder="relaxing music, classical music, piano"></textarea>
+<label for="metadataHashtags">Hashtags (comma-separated, without #)</label><input type="text" id="metadataHashtags" placeholder="ClassicalMusic, RelaxingMusic, StudyMusic">
+<div class="row" style="margin-top:12px"><button type="button" class="tab" id="metadataCopyTags">Copy YouTube tags</button><button type="button" class="tab" id="metadataCopyAll">Copy title, description and tags</button></div>
+<div class="muted">The generator uses the saved music prompts and video details. Review the draft before publishing; no publishing to YouTube happens automatically.</div>
+</section>
 </div>
 <div class="tabpane" id="pane-mixes">
 <section class="panel"><h2>Step 2 — Build a compilation</h2>
@@ -574,6 +589,75 @@ function renderVideoProgress(tasks){
      '<div class="muted" style="margin-top:9px">'+esc(j.progress||'')+'</div></div>';
  }).join(''):'No video render is currently active.';
 }
+let metadataDirty=false;
+const metadataId=()=>$('metadataVideo').value;
+const metadataFields=['metadataTitle','metadataDescription','metadataKeywords','metadataTags','metadataHashtags'];
+function showVideoMetadata(data){
+ $('metadataTitle').value=data.title||'';
+ $('metadataDescription').value=data.description||'';
+ for(const field of ['keywords','tags','hashtags']){
+   const value=data[field]||[];
+   $('metadata'+field.charAt(0).toUpperCase()+field.slice(1)).value=
+     Array.isArray(value)?value.join(', '):String(value);
+ }
+ metadataDirty=false;
+}
+function currentVideoMetadata(){
+ return {title:$('metadataTitle').value.trim(),description:$('metadataDescription').value.trim(),
+ keywords:$('metadataKeywords').value.split(',').map(x=>x.trim()).filter(Boolean),
+ tags:$('metadataTags').value.split(',').map(x=>x.trim()).filter(Boolean),
+ hashtags:$('metadataHashtags').value.split(',').map(x=>x.trim().replace(/^#/,'')).filter(Boolean)};
+}
+async function loadVideoMetadata(){
+ const id=metadataId();showVideoMetadata({});
+ if(!id){$('metadataStatus').textContent='Choose a finished video.';return}
+ const account=activeAccount;
+ $('metadataStatus').textContent='Loading saved metadata...';
+ try{const m=await read('/finished-videos/'+encodeURIComponent(id)+'/metadata?account_id='+encodeURIComponent(account));
+ if(account!==activeAccount||id!==metadataId())return;
+ showVideoMetadata(m);$('metadataStatus').textContent=m.title?'Saved metadata loaded.':'No metadata yet — click Generate.'}
+ catch(e){$('metadataStatus').textContent=e.message}
+}
+$('metadataVideo').onchange=loadVideoMetadata;
+metadataFields.forEach(id=>$(id).addEventListener('input',()=>{metadataDirty=true}));
+$('metadataGenerate').onclick=async()=>{
+ const id=metadataId();if(!id){$('metadataStatus').textContent='Select a finished video first.';return}
+ if(metadataDirty&&!confirm('Generate again? This will replace unsaved metadata edits.'))return;
+ $('metadataGenerate').disabled=true;$('metadataStatus').textContent='Generating SEO description with local Ollama...';
+ const account=activeAccount;
+ try{
+ const m=await post('/finished-videos/'+encodeURIComponent(id)+'/metadata/generate',
+ {account_id:account,focus:$('metadataFocus').value});
+ if(account!==activeAccount||id!==metadataId())return;
+ showVideoMetadata(m);$('metadataStatus').textContent='Generated and saved. You can edit or copy the results.';}
+ catch(e){$('metadataStatus').textContent=e.message}
+ finally{$('metadataGenerate').disabled=false}
+};
+$('metadataSave').onclick=async()=>{
+ const id=metadataId();if(!id){$('metadataStatus').textContent='Select a finished video first.';return}
+ $('metadataSave').disabled=true;
+ try{
+ const res=await fetch('/api/finished-videos/'+encodeURIComponent(id)+'/metadata',
+ {method:'PUT',headers:{'Content-Type':'application/json'},
+ body:JSON.stringify({account_id:activeAccount,...currentVideoMetadata()})});
+ const data=await res.json();if(!res.ok)throw Error(data.error||'Saving failed');
+ showVideoMetadata(data);$('metadataStatus').textContent='Your YouTube details are saved.';}
+ catch(e){$('metadataStatus').textContent=e.message}
+ finally{$('metadataSave').disabled=false}
+};
+async function copyMetadataText(value){
+ if(!value){$('metadataStatus').textContent='Nothing to copy yet.';return}
+ try{await navigator.clipboard.writeText(value);$('metadataStatus').textContent='Copied to clipboard.'}
+ catch(e){$('metadataStatus').textContent='Browser clipboard is unavailable. Select and copy the text manually.'}
+}
+$('metadataCopyDescription').onclick=()=>copyMetadataText($('metadataDescription').value);
+$('metadataCopyTitle').onclick=()=>copyMetadataText($('metadataTitle').value);
+$('metadataCopyTags').onclick=()=>copyMetadataText($('metadataTags').value);
+$('metadataCopyAll').onclick=()=>{
+ const m=currentVideoMetadata();
+ copyMetadataText(m.title+'\n\n'+m.description+'\n\nYouTube tags: '+m.tags.join(', ')+
+ '\nSEO keywords: '+m.keywords.join(', '));
+};
 async function loadFinishedMedia(){
  const account=activeAccount;
  try{
@@ -591,6 +675,11 @@ async function loadFinishedMedia(){
   const taskHtml=active.map(j=>'<div class="status"><strong>'+esc(j.kind==='mp3'?'MP3 mixing':'Video rendering')+'</strong> — '+esc(j.progress)+'</div>').join('');
   const recentErrors=tasks.filter(j=>j.status==='error').slice(0,3).map(j=>'<div class="status error">'+esc(j.progress)+'</div>').join('');
   $('finishedMp3Library').innerHTML=taskHtml+recentErrors+(mp3s.length?mp3s.map(m=>'<div class="status"><strong>'+esc(m.title)+'</strong> <span class="pill">'+dur(m.duration)+'</span><audio controls preload="none" style="display:block;width:100%;margin:10px 0" src="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'"></audio><a href="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'&download=1">Download MP3</a></div>').join(''):'No finished MP3s yet.');
+  const previousMetadataVideo=metadataId();
+  $('metadataVideo').innerHTML='<option value="">Choose a finished video</option>'+
+    vids.map(v=>'<option value="'+esc(v.id)+'">'+esc(v.title)+' ('+dur(v.duration)+')</option>').join('');
+  if(vids.some(v=>v.id===previousMetadataVideo))$('metadataVideo').value=previousMetadataVideo;
+  else if(vids.length){$('metadataVideo').value=vids[0].id;loadVideoMetadata();}
   const oldMp3=$('editorMp3').value,oldThumb=$('editorThumbnail').value;
   $('editorMp3').innerHTML='<option value="">Select a finished MP3</option>'+mp3s.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.title)+' ('+dur(m.duration)+')</option>').join('');
   $('editorThumbnail').innerHTML='<option value="">Select a background cover</option>'+
