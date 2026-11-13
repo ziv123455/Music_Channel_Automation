@@ -167,7 +167,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <div id="editorCoverPreview" style="display:none;margin:12px 0">
 <div id="editorStage" class="editor-stage"><img id="editorCoverImage" alt="Selected video background cover"><div id="editorCoverParticles" class="particle-cover-dots" data-kind="none"></div><div id="editorRingOverlay" class="editor-ring-preview" style="display:none"></div></div>
 </div>
-<div id="editorControls"></div>
+<div id="editorControls"></div><div class="row"><button type="button" id="editorAccuratePreview" class="tab">Render accurate cover preview</button><span id="accuratePreviewStatus" class="muted"></span></div><div id="editorAccurateResult" style="display:none;margin:12px 0"><img id="editorAccurateImage" class="thumb" style="max-width:720px" alt="Accurate cover preview"><p class="muted">This uses the export crop and photo corrections. The interactive preview above is for moving effects and approximate color changes.</p></div>
 <div id="editorPreview" class="muted"></div>
 <button type="submit" id="renderFinishedVideo">Render Video</button><span id="videoCreateMessage" class="muted"></span>
 </form>
@@ -251,7 +251,7 @@ const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padSt
 async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const text=await r.text();let j;try{j=JSON.parse(text)}catch(e){throw Error('Server returned HTTP '+r.status+' instead of JSON. Check the Flask PowerShell window for the underlying error.')}if(!r.ok)throw Error(j.error||'Request failed (HTTP '+r.status+')');return j}
 function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
-function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';selectedTrackIds=[];mediaMp3s=[];$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';selectedTrackIds=[];mediaMp3s=[];restoreEditorSettings();$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 async function loadAccounts(){
  accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
  renderAccounts();applyAccount();
@@ -396,6 +396,8 @@ const editorDefaults={
  ring:{x:50,y:50,size:28,opacity:90,color:'#ffffff'}
 };
 let editorSettings=JSON.parse(JSON.stringify(editorDefaults));
+function saveEditorSettings(){try{localStorage.setItem('music_video_editor_'+activeAccount,JSON.stringify(editorSettings))}catch(e){}}
+function restoreEditorSettings(){try{const value=JSON.parse(localStorage.getItem('music_video_editor_'+activeAccount)||'null');editorSettings=value&&typeof value==='object'?{cover:{...editorDefaults.cover,...(value.cover||{})},particles:{...editorDefaults.particles,...(value.particles||{})},ring:{...editorDefaults.ring,...(value.ring||{})}}:JSON.parse(JSON.stringify(editorDefaults));}catch(e){editorSettings=JSON.parse(JSON.stringify(editorDefaults))}renderEditorControls();updateEditorPreview()}
 const editorFields={
  cover:[['zoom','Zoom',.5,3,.05],['x','Horizontal position',0,100,1],['y','Vertical position',0,100,1],
  ['fit','Image fit'],['brightness','Brightness',0,200,1],['contrast','Contrast',0,200,1],
@@ -426,7 +428,7 @@ function renderEditorControls(){
    const layer=control.dataset.edlayer,key=control.dataset.edkey;
    editorSettings[layer][key]=(key==='fit'||key==='color')?control.value:Number(control.value);
    const out=$(control.id+'-value');if(out)out.textContent=control.value;
-   updateEditorPreview();
+   updateEditorPreview();saveEditorSettings();
   });
  });
 }
@@ -470,9 +472,9 @@ function updateEditorPreview(){
 }
 function resetEditor(layer){
  editorSettings[layer]=JSON.parse(JSON.stringify(editorDefaults[layer]));
- updateEditorControlValues();updateEditorPreview();
+ updateEditorControlValues();updateEditorPreview();saveEditorSettings();
 }
-$('editorResetAll').onclick=()=>{editorSettings=JSON.parse(JSON.stringify(editorDefaults));updateEditorControlValues();updateEditorPreview()};
+$('editorResetAll').onclick=()=>{editorSettings=JSON.parse(JSON.stringify(editorDefaults));updateEditorControlValues();updateEditorPreview();saveEditorSettings()};
 $('editorResetLayer').onclick=()=>resetEditor($('editorDragLayer').value);
 $('editorCircularVisualizer').onchange=updateEditorPreview;
 $('editorCoverImage').onload=updateEditorPreview;
@@ -493,14 +495,28 @@ $('editorStage').addEventListener('pointerdown',event=>{
   }
   updateEditorControlValues();updateEditorPreview();
  };
- const done=()=>{stage.removeEventListener('pointermove',move);stage.removeEventListener('pointerup',done);stage.removeEventListener('pointercancel',done)};
+ const done=()=>{stage.removeEventListener('pointermove',move);stage.removeEventListener('pointerup',done);stage.removeEventListener('pointercancel',done);saveEditorSettings()};
  stage.addEventListener('pointermove',move);
  stage.addEventListener('pointerup',done);
  stage.addEventListener('pointercancel',done);
 });
 window.addEventListener('resize',updateEditorPreview);
 renderEditorControls();
-
+let accuratePreviewUrl=null;
+$('editorAccuratePreview').onclick=async()=>{
+ const cover=$('editorThumbnail').value.split(':');
+ if(cover.length!==2||!['thumbnail','reference'].includes(cover[0])){$('accuratePreviewStatus').textContent='Select a cover first.';return}
+ $('editorAccuratePreview').disabled=true;$('accuratePreviewStatus').textContent='Processing cover...';
+ try{
+  const r=await fetch('/api/finished-media/preview-cover',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({account_id:activeAccount,cover_type:cover[0],thumbnail_id:cover[1],editor_settings:editorSettings})});
+  if(!r.ok){const problem=await r.json();throw Error(problem.error||'Preview failed')}
+  const blob=await r.blob();if(accuratePreviewUrl)URL.revokeObjectURL(accuratePreviewUrl);
+  accuratePreviewUrl=URL.createObjectURL(blob);$('editorAccurateImage').src=accuratePreviewUrl;
+  $('editorAccurateResult').style.display='block';$('accuratePreviewStatus').textContent='Accurate cover preview generated.';
+ }catch(e){$('accuratePreviewStatus').textContent=e.message}
+ finally{$('editorAccuratePreview').disabled=false}
+};
 const particlePalettes={dust:['#f3dba6','rgba(255,211,117,.45)'],fireflies:['#d4ff8d','rgba(151,255,88,.65)'],snow:['#ebf4ff','rgba(226,240,255,.5)'],embers:['#ff9959','rgba(255,98,27,.55)']};
 function drawParticleDots(container,kind,count){
  container.dataset.kind=kind;
@@ -524,7 +540,7 @@ function updateParticlePreview(){
 }
 document.querySelectorAll('.particle-example').forEach(b=>{
  drawParticleDots(b.querySelector('.particle-demo'),b.dataset.particle,15);
- b.onclick=()=>{$('editorParticles').value=b.dataset.particle;updateParticlePreview()};
+ b.onclick=()=>{$('editorParticles').value=b.dataset.particle;const palette=particlePalettes[b.dataset.particle];if(palette){editorSettings.particles.color=palette[0];updateEditorControlValues();saveEditorSettings()}updateParticlePreview()};
 });
 $('editorParticleIntensity').onchange=updateParticlePreview;
 updateParticlePreview();
@@ -577,7 +593,7 @@ async function loadFinishedMedia(){
   $('editorThumbnail').onchange=()=>{
     const [kind,id]=$('editorThumbnail').value.split(':');
     const item=(kind==='thumbnail'?thumbs:refs).find(t=>t.id===id);
-    $('editorCoverPreview').style.display=item?'block':'none';
+    $('editorCoverPreview').style.display=item?'block':'none';$('editorAccurateResult').style.display='none';
     if(item)$('editorCoverImage').src=kind==='thumbnail'?'/api/thumbnail/'+encodeURIComponent(item.filename):
       '/api/reference/'+encodeURIComponent(item.filename)+'?account_id='+encodeURIComponent(account);
   };
