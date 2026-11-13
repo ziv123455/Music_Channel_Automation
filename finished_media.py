@@ -255,7 +255,9 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
         if particles != "none":
             particle_dir = tempfile.mkdtemp(prefix="music_video_particles_")
             job_change(job_id, progress="Drawing looping " + particles + " particle animation")
-            pattern = build_particle_frames(particle_dir, particles, particle_intensity)
+            pattern = build_particle_frames(particle_dir, particles, particle_intensity,
+                                            color=editor_settings["particles"]["color"],
+                                            brightness=editor_settings["particles"]["brightness"])
             args.extend(["-stream_loop", "-1", "-framerate", str(FPS * editor_settings["particles"]["speed"] / 100), "-i", pattern])
         if visualizer or particles != "none":
             filters.append("[0:v]" + background + "[bg]")
