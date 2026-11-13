@@ -296,23 +296,33 @@ def suggest_thumbnail_prompt():
         return jsonify(error="Invalid analysis mode."), 400
     if mode in ("remake", "img2img"):
         instruction = (
-            "You are a creative art director. Analyze the ATTACHED reference image visually, "
-            "then INVENT a fresh original reinterpretation for SDXL/Juggernaut XL TEXT-TO-IMAGE. "
-            "The generator WILL NOT receive the reference image: your prompt must be self-contained. "
-            "Retain only the recognizable core subject/concept and artistic mood; freely redesign "
-            "the setting, viewpoint, camera framing, composition, props, architecture, poses, "
-            "lighting and colors. Do not reproduce exact arrangements or iconic details. "
-            "Do not change the subject to a piano or concert hall unless the image or user's "
-            "instructions actually call for one. A Renaissance geometry scene should become "
-            "a novel scene about a scholar and geometric artwork, not a direct reproduction. "
-            "Create a compelling, clear focal point suitable for a 16:9 YouTube thumbnail. "
-            "Write a specific, visual, fully standalone generation prompt with distinct details. "
-            "Avoid text/watermarks in the generated image. "
-            "Reply ONLY with JSON strings: prompt (60-120 words describing your new image), "
-            "negative_prompt (defects and unwanted objects), "
-            "style_summary (brief summary of reference concept and medium). "
-            f"User's desired changes: {direction or 'Redesign the reference with new details'}. "
-            f"Channel genre (mood only, NOT replacement subject): {account.get('genre', 'Music')}."
+            "You are a visual analyst and creative prompt writer for SDXL/Juggernaut XL. "
+            "You have been given a REFERENCE IMAGE. Perform these TWO SEPARATE tasks in order. "
+            "TASK 1 - DESCRIBE: Look carefully at the actual image and give a factual, "
+            "specific reference_description of what you SEE: the major subjects and objects, "
+            "their relationships and setting, approximate layout, camera viewpoint, artistic "
+            "medium, texture, color palette, lighting, historical aesthetic and mood. "
+            "Do not invent visible details. Do not assume there is a piano because this is "
+            "a music channel. "
+            "TASK 2 - INTERPRET: Based on that description, write a FULLY STANDALONE English "
+            "txt2img prompt that conveys the SAME SUBJECT TYPE, overall theme and "
+            "recognizable artistic style, including medium, palette, texture and lighting, "
+            "but invites a DIFFERENT composition, setting details, character designs, "
+            "props and visual arrangements. Let the diffusion model interpret the prompt "
+            "freely; do not request an exact duplicate, same poses or identical placement. "
+            "The diffusion model WILL NOT SEE the original image. Describe everything "
+            "it needs to create a similar-feeling but original artwork. "
+            "For a thumbnail, request one readable focal point, cinematic 16:9 framing, "
+            "high-quality details and no text inside the picture. "
+            "Return ONLY a JSON object with FOUR string keys: "
+            "reference_description (60-130 words describing the real source image), "
+            "style_summary (medium, colors, lighting, texture and mood), "
+            "prompt (70-140 words describing a newly interpreted but stylistically faithful "
+            "scene; do not mention a reference image), "
+            "negative_prompt (unwanted subjects and image defects). "
+            f"Optional user's requested changes: {direction or 'Keep the same type of scene and visual style, with new details'}. "
+            f"Channel genre: {account.get('genre', 'Music')} (mood context only; do not "
+            "substitute a music-related subject unless requested or seen)."
         )
     else:
         instruction = (
@@ -342,19 +352,22 @@ def suggest_thumbnail_prompt():
             OLLAMA_API + "/api/generate",
             json={"model": VISION_MODEL, "prompt": instruction,
                   "images": [image_b64], "stream": False, "format": "json",
-                  "options": {"temperature": 0.5, "num_predict": 380}, "keep_alive": 0},
+                  "options": {"temperature": 0.4, "num_predict": 620}, "keep_alive": 0},
             timeout=240
         )
         response.raise_for_status()
         result = json.loads(response.json().get("response") or "{}")
         prompt = str(result.get("prompt") or "").strip()[:950]
         negative = str(result.get("negative_prompt") or "").strip()[:500]
-        summary = str(result.get("style_summary") or "").strip()[:500]
+        summary = str(result.get("style_summary") or "").strip()[:700]
+        reference_description = str(result.get("reference_description") or "").strip()[:1100]
+        if mode in ("remake", "img2img") and len(reference_description) < 40:
+            raise ValueError("Ollama did not describe the reference. Please retry analysis.")
         if len(prompt) < 35:
             raise ValueError("Vision model returned an incomplete image prompt.")
         if not negative:
             negative = "blurry, distorted objects, duplicate subjects, extra limbs, text, watermark, logo"
-        return jsonify(prompt=prompt, negative_prompt=negative, style_summary=summary, model=VISION_MODEL)
+        return jsonify(prompt=prompt, negative_prompt=negative, style_summary=summary, reference_description=reference_description, model=VISION_MODEL)
     except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as exc:
         return jsonify(error=(
             f"Ollama vision analysis failed ({VISION_MODEL}). "
@@ -394,9 +407,9 @@ def generate_art():
         return jsonify(error="Enter a thumbnail design prompt."), 400
 
     negative_base = (
-        "blurry, duplicate people, duplicate objects, malformed anatomy, "
-        "distorted instruments, warped perspective, bad composition, low quality, "
-        "text, watermark, logo, signature"
+        "blurry, duplicate subjects, malformed anatomy, distorted objects, "
+        "warped perspective, bad composition, low quality, text, watermark, "
+        "logo, signature"
     )
     payload = {
         "prompt": description + ", original professional cinematic music thumbnail artwork, "
@@ -411,7 +424,7 @@ def generate_art():
 
     if mode == "img2img":
         try:
-            strength = float(data.get("strength", 0.45 if mode == "remake" else 0.30))
+            strength = float(data.get("strength", 0.30))
         except (TypeError, ValueError):
             return jsonify(error="Invalid img2img transformation strength."), 400
         if not 0.2 <= strength <= 0.95:
