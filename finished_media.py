@@ -39,6 +39,11 @@ def initialize():
             id TEXT PRIMARY KEY, account_id TEXT NOT NULL, title TEXT NOT NULL,
             filename TEXT NOT NULL, mp3_id TEXT NOT NULL, thumbnail_id TEXT NOT NULL,
             duration REAL NOT NULL, created TEXT NOT NULL)""")
+        columns = {row["name"] for row in cn.execute("PRAGMA table_info(finished_videos)")}
+        if "cover_type" not in columns:
+            cn.execute("ALTER TABLE finished_videos ADD COLUMN cover_type TEXT NOT NULL DEFAULT 'thumbnail'")
+        if "visualizer" not in columns:
+            cn.execute("ALTER TABLE finished_videos ADD COLUMN visualizer INTEGER NOT NULL DEFAULT 0")
 
 
 def current_account(data=None):
@@ -215,24 +220,45 @@ def get_video(item_id):
     return send_from_directory(OUTPUT_VIDEOS, item["filename"], as_attachment=True)
 
 
-def render_video(job_id, account_id, output_id, title, mp3, thumb, duration):
+def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer):
     output = OUTPUT_VIDEOS / (output_id + ".mp4")
     try:
         audio_path = MP3S / mp3["filename"]
-        image_path = THUMBS / thumb["filename"]
+        image_path = (THUMBS if cover_type == "thumbnail" else DATA / "references") / thumb["filename"]
         if not audio_path.is_file() or not image_path.is_file():
             raise FileNotFoundError("MP3 or thumbnail file is missing.")
         job_change(job_id, status="running",
                    progress="Rendering thumbnail-backed video with repeating MP3 audio")
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                "-loop", "1", "-framerate", "1", "-i", str(image_path),
-                "-stream_loop", "-1", "-i", str(audio_path),
-                "-t", f"{duration:.3f}", "-map", "0:v:0", "-map", "1:a:0",
-                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                       "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-                "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
-                "-r", "24", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart", str(output)]
+                "-loop", "1", "-framerate", "24", "-i", str(image_path),
+                "-stream_loop", "-1", "-i", str(audio_path)]
+        background = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
+                      "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p")
+        if visualizer:
+            # A sound-reactive ring, built entirely in FFmpeg (no extra installs).
+            radial = (
+                "if(between(hypot(X-256\,Y-256)\,138\,142)\,210\,"
+                "if(between(hypot(X-256\,Y-256)\,142\,205)\,"
+                "lum(512*(atan2(Y-256\,X-256)+PI)/(2*PI)\,"
+                "512-(hypot(X-256\,Y-256)-142)*8)\,0))"
+            )
+            graph = (
+                "[0:v]" + background + "[bg];"
+                "[1:a]asplit=2[aout][viz];"
+                "[viz]showfreqs=s=512x512:mode=bar:ascale=lin:fscale=log:"
+                "colors=white:rate=24,format=gray,geq=lum=" + radial +
+                ",format=rgba,colorkey=0x000000:0.06:0.1[ring];"
+                "[bg][ring]overlay=(main_w-overlay_w)/2:"
+                "(main_h-overlay_h)/2:shortest=1[v]"
+            )
+            args.extend(["-filter_complex", graph, "-map", "[v]", "-map", "[aout]"])
+        else:
+            args.extend(["-vf", background, "-map", "0:v:0", "-map", "1:a:0"])
+        args.extend(["-t", f"{duration:.3f}",
+                     "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
+                     "-r", "24", "-pix_fmt", "yuv420p",
+                     "-c:a", "aac", "-b:a", "192k",
+                     "-movflags", "+faststart", str(output)])
         proc = subprocess.run(args, capture_output=True, text=True, timeout=14400)
         if proc.returncode != 0:
             raise RuntimeError("FFmpeg video render failed: " + proc.stderr[-1100:])
