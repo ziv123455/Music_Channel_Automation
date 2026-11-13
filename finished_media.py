@@ -288,14 +288,19 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
             raise RuntimeError("No rendered video was created.")
         with connect() as cn:
             cn.execute("""INSERT INTO finished_videos
-                (id,account_id,title,filename,mp3_id,thumbnail_id,duration,created,cover_type,visualizer)
-                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (id,account_id,title,filename,mp3_id,thumbnail_id,duration,created,
+                 cover_type,visualizer,particles,particle_intensity)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (output_id,account_id,title,output.name,mp3["id"],thumb["id"],
-                 duration,datetime.now().isoformat(),cover_type,int(visualizer)))
+                 duration,datetime.now().isoformat(),cover_type,int(visualizer),
+                 particles,particle_intensity))
         job_change(job_id, status="done", progress="Finished video saved")
     except Exception as exc:
         output.unlink(missing_ok=True)
         job_change(job_id, status="error", progress=str(exc)[:1400])
+    finally:
+        if particle_dir is not None:
+            shutil.rmtree(particle_dir, ignore_errors=True)
 
 
 @bp.post("/finished-videos")
@@ -332,8 +337,13 @@ def create_video():
     output_id = uuid.uuid4().hex
     title = safe_title(data.get("title"), "Music Video")
     visualizer = data.get("visualizer") is True
+    particles = str(data.get("particles") or "none")
+    particle_intensity = str(data.get("particle_intensity") or "normal")
+    if particles not in STYLES or particle_intensity not in LEVELS:
+        return jsonify(error="Invalid particle effect or intensity."), 400
     job_id = new_job("video", account["id"], output_id)
     threading.Thread(target=render_video,
-                     args=(job_id, account["id"], output_id, title, mp3, thumb, duration, cover_type, visualizer),
+                     args=(job_id, account["id"], output_id, title, mp3, thumb, duration, cover_type,
+                           visualizer, particles, particle_intensity),
                      daemon=True).start()
     return jsonify(job_id=job_id, id=output_id), 202
