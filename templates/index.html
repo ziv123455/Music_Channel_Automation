@@ -49,6 +49,11 @@ input[type=text],input[type=email],input[type=number],select{width:100%}input[ty
 @keyframes particle-rise{from{transform:translate(0,70px)}to{transform:translate(var(--dx),-85px)}}
 @keyframes particle-glow{from{transform:translate(0,0);opacity:.15}to{transform:translate(var(--dx),var(--dy));opacity:var(--po)}}
 @media(prefers-reduced-motion:reduce){.particle-dot{animation:none}}
+.render-progress-card{border:1px solid #515573;background:#1a1d31;border-radius:12px;padding:15px;margin:12px 0}
+.render-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.render-meter{height:15px;background:#35394f;border-radius:999px;overflow:hidden;margin:12px 0}
+.render-meter-fill{background:linear-gradient(90deg,#8660db,#ba96f5);height:100%;width:0%;border-radius:999px;transition:width .6s ease}
+.render-progress-meta{display:flex;gap:12px;flex-wrap:wrap;justify-content:space-between;color:#bfc0d4;font-size:12px}
 .mix-order{display:flex;flex-direction:column;gap:7px;margin:12px 0}
 .mix-order-item{display:flex;align-items:center;gap:10px;padding:9px;border:1px solid #494b68;border-radius:9px;background:#202337}
 .mix-order-item>span{flex:1;min-width:0;overflow-wrap:anywhere}
@@ -145,6 +150,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <button type="submit" id="renderFinishedVideo">Render Video</button><span id="videoCreateMessage" class="muted"></span>
 </form>
 </section>
+<section class="panel"><h2>Rendering progress</h2><p class="muted">The bar follows FFmpeg&#39;s encoded video timestamp and updates approximately every six seconds. Keep the rendering application running.</p><div id="videoRenderProgress">No video render is currently active.</div></section>
 <section class="panel"><h2>Finished Videos</h2><div id="finishedVideoLibrary">Loading finished videos...</div></section>
 </div>
 <div class="tabpane" id="pane-mixes">
@@ -389,6 +395,28 @@ document.querySelectorAll('.particle-example').forEach(b=>{
 });
 $('editorParticleIntensity').onchange=updateParticlePreview;
 updateParticlePreview();
+function renderClock(seconds){
+ if(seconds==null||!Number.isFinite(Number(seconds)))return 'Calculating...';
+ const value=Math.max(0,Math.floor(Number(seconds)));
+ return Math.floor(value/3600)+':'+String(Math.floor(value/60)%60).padStart(2,'0')+':'+String(value%60).padStart(2,'0');
+}
+function renderVideoProgress(tasks){
+ const relevant=tasks.filter(j=>j.kind==='video');
+ const active=relevant.filter(j=>j.status==='queued'||j.status==='running');
+ const jobs=active.length?active:relevant.slice(0,1);
+ $('videoRenderProgress').innerHTML=jobs.length?jobs.map(j=>{
+   const pct=Math.min(100,Math.max(0,Number(j.percent)||0));
+   const status=j.status==='done'?'Completed':j.status==='error'?'Failed':j.status==='queued'?'Queued':'Rendering';
+   const meta=j.status==='done'?'Video ready in Finished Videos':j.status==='error'?'Check the error below':
+     renderClock(j.rendered_seconds)+' / '+renderClock(j.total_seconds)+' of video encoded';
+   const eta=j.status==='done'?'Finished':j.status==='error'?'Stopped':'ETA '+renderClock(j.eta_seconds);
+   return '<div class="render-progress-card"><div class="render-progress-head"><strong>'+esc(status)+'</strong><strong>'+pct.toFixed(1)+'%</strong></div>'+
+     '<div class="render-meter" role="progressbar" aria-label="Video render progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+pct.toFixed(1)+'"><div class="render-meter-fill" style="width:'+pct+'%"></div></div>'+
+     '<div class="render-progress-meta"><span>'+esc(meta)+'</span><span>Elapsed '+renderClock(j.elapsed_seconds)+'</span><span>'+eta+'</span>'+
+     (j.speed?'<span>Speed '+Number(j.speed).toFixed(2)+'x</span>':'')+'</div>'+
+     '<div class="muted" style="margin-top:9px">'+esc(j.progress||'')+'</div></div>';
+ }).join(''):'No video render is currently active.';
+}
 async function loadFinishedMedia(){
  const account=activeAccount;
  try{
@@ -402,6 +430,7 @@ async function loadFinishedMedia(){
   if(account!==activeAccount)return;
   mediaMp3s=mp3s;
   const active=tasks.filter(j=>j.status==='queued'||j.status==='running');
+  renderVideoProgress(tasks);
   const taskHtml=active.map(j=>'<div class="status"><strong>'+esc(j.kind==='mp3'?'MP3 mixing':'Video rendering')+'</strong> — '+esc(j.progress)+'</div>').join('');
   const recentErrors=tasks.filter(j=>j.status==='error').slice(0,3).map(j=>'<div class="status error">'+esc(j.progress)+'</div>').join('');
   $('finishedMp3Library').innerHTML=taskHtml+recentErrors+(mp3s.length?mp3s.map(m=>'<div class="status"><strong>'+esc(m.title)+'</strong> <span class="pill">'+dur(m.duration)+'</span><audio controls preload="none" style="display:block;width:100%;margin:10px 0" src="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'"></audio><a href="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'&download=1">Download MP3</a></div>').join(''):'No finished MP3s yet.');
