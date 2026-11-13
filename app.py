@@ -5,6 +5,7 @@ import sqlite3, subprocess, shutil, uuid, threading, json
 from music_generation import check_connection, generate_one, base_url
 from channel_features import bp as channel_blueprint, initialize as initialize_channels, valid_account, compose_music_prompt, connect as channel_db, THUMBS
 from compilation_pipeline import bp as pipeline_blueprint, init as initialize_pipeline, configure_render, create_draft
+from finished_media import bp as finished_media_blueprint, initialize as initialize_finished_media
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -35,6 +36,8 @@ with db() as conn:
 app.register_blueprint(channel_blueprint)
 initialize_pipeline()
 app.register_blueprint(pipeline_blueprint)
+initialize_finished_media()
+app.register_blueprint(finished_media_blueprint)
 
 def probe(path):
     output = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], text=True)
