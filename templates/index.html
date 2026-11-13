@@ -347,8 +347,11 @@ async function loadFinishedMedia(){
   const taskHtml=active.map(j=>'<div class="status"><strong>'+esc(j.kind==='mp3'?'MP3 mixing':'Video rendering')+'</strong> — '+esc(j.progress)+'</div>').join('');
   const recentErrors=tasks.filter(j=>j.status==='error').slice(0,3).map(j=>'<div class="status error">'+esc(j.progress)+'</div>').join('');
   $('finishedMp3Library').innerHTML=taskHtml+recentErrors+(mp3s.length?mp3s.map(m=>'<div class="status"><strong>'+esc(m.title)+'</strong> <span class="pill">'+dur(m.duration)+'</span><audio controls preload="none" style="display:block;width:100%;margin:10px 0" src="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'"></audio><a href="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'&download=1">Download MP3</a></div>').join(''):'No finished MP3s yet.');
+  const oldMp3=$('editorMp3').value,oldThumb=$('editorThumbnail').value;
   $('editorMp3').innerHTML='<option value="">Select a finished MP3</option>'+mp3s.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.title)+' ('+dur(m.duration)+')</option>').join('');
   $('editorThumbnail').innerHTML='<option value="">Select a thumbnail</option>'+thumbs.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.title)+'</option>').join('');
+  if(mp3s.some(m=>m.id===oldMp3))$('editorMp3').value=oldMp3;
+  if(thumbs.some(t=>t.id===oldThumb))$('editorThumbnail').value=oldThumb;
   $('finishedVideoLibrary').innerHTML=tasks.filter(j=>j.kind==='video'&&j.status!=='done').map(j=>'<div class="status">'+esc(j.status)+': '+esc(j.progress)+'</div>').join('')+(vids.length?vids.map(v=>'<div class="status"><strong>'+esc(v.title)+'</strong> · '+dur(v.duration)+' <a href="/api/finished-videos/'+encodeURIComponent(v.id)+'/video?account_id='+encodeURIComponent(account)+'">Download MP4</a></div>').join(''):'No finished videos yet.');
   $('editorPreview').textContent='Choose a finished MP3 and set the video length. The MP3 loops continuously to fill the video.';
  }catch(e){$('finishedMp3Library').textContent=e.message;$('finishedVideoLibrary').textContent=e.message}
