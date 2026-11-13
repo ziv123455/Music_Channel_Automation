@@ -285,9 +285,49 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
                      "-r", "24", "-pix_fmt", "yuv420p",
                      "-c:a", "aac", "-b:a", "192k",
                      "-movflags", "+faststart", str(output)])
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=14400)
-        if proc.returncode != 0:
-            raise RuntimeError("FFmpeg video render failed: " + proc.stderr[-1100:])
+        # Parse real FFmpeg video timestamps; progress is independent of output file size.
+        progress_file = tempfile.NamedTemporaryFile(prefix="music_video_progress_", suffix=".txt", delete=False)
+        progress_path = Path(progress_file.name)
+        progress_file.close()
+        args[1:1] = ["-nostats", "-progress", str(progress_path)]
+        render_start = time.monotonic()
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as error_log:
+            proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=error_log)
+            last_rendered = 0.0
+            while proc.poll() is None:
+                if time.monotonic() - render_start > 14400:
+                    proc.kill()
+                    proc.wait()
+                    raise TimeoutError("Video rendering exceeded four hours.")
+                try:
+                    values = {}
+                    for line in progress_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                        if "=" in line:
+                            key, value = line.split("=", 1)
+                            values[key] = value.strip()
+                    # FFmpeg reports microseconds in out_time_us and out_time_ms.
+                    if values.get("out_time_us") or values.get("out_time_ms"):
+                        rendered = max(0.0, float(values.get("out_time_us") or values["out_time_ms"]) / 1000000.0)
+                    elif values.get("out_time") and values["out_time"] != "N/A":
+                        hh, mm, ss = values["out_time"].split(":")
+                        rendered = int(hh) * 3600 + int(mm) * 60 + float(ss)
+                    else:
+                        rendered = last_rendered
+                    last_rendered = min(duration, max(last_rendered, rendered))
+                    elapsed = max(0.001, time.monotonic() - render_start)
+                    speed = last_rendered / elapsed
+                    eta = max(0.0, (duration - last_rendered) / speed) if speed > 0.01 else None
+                    job_change(job_id, percent=round(min(99.9, 100 * last_rendered / duration), 1),
+                               rendered_seconds=round(last_rendered, 1),
+                               elapsed_seconds=round(elapsed, 1),
+                               eta_seconds=round(eta) if eta is not None else None,
+                               speed=round(speed, 2))
+                except (OSError, ValueError, TypeError, UnicodeError):
+                    pass
+                time.sleep(1)
+            if proc.returncode != 0:
+                error_log.seek(0)
+                raise RuntimeError("FFmpeg video render failed: " + error_log.read()[-1100:])
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError("No rendered video was created.")
         with connect() as cn:
