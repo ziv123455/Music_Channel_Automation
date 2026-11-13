@@ -70,6 +70,29 @@ def upload():
         conn.execute("INSERT INTO songs (id,title,filename,duration,created,account_id,prompt) VALUES (?,?,?,?,?,?,?)", (song_id, title, filename, duration, datetime.now().isoformat(), account_id, ""))
     return jsonify(id=song_id, title=title, duration=duration), 201
 
+@app.delete("/api/songs/<song_id>")
+def delete_song(song_id):
+    account_id = request.args.get("account_id", "default")
+    if not valid_account(account_id):
+        return jsonify(error="Invalid channel"), 404
+    with db() as conn:
+        song = conn.execute("SELECT filename FROM songs WHERE id=? AND account_id=?", (song_id, account_id)).fetchone()
+        if not song:
+            return jsonify(error="Song not found in this channel."), 404
+        for compilation in conn.execute("SELECT title, track_ids, status FROM compilations WHERE account_id=?", (account_id,)):
+            if compilation["status"] not in ("draft", "rendering"):
+                continue
+            try:
+                ids = json.loads(compilation["track_ids"] or "[]")
+            except (ValueError, TypeError):
+                continue
+            if song_id in ids:
+                return jsonify(error="This song belongs to the active compilation '" + compilation["title"] + "'. Finish or remove its draft before deleting it."), 409
+        conn.execute("DELETE FROM songs WHERE id=? AND account_id=?", (song_id, account_id))
+    (SONGS / song["filename"]).unlink(missing_ok=True)
+    return jsonify(deleted=True, id=song_id)
+
+
 @app.get("/api/song/<song_id>")
 def song_file(song_id):
     with db() as conn:
@@ -210,6 +233,13 @@ def generation_worker(job_id, payload):
             path = SONGS / filename
             genre = payload["genre"].strip()
             base_prompt = payload["prompt"].strip()
+            if payload.get("reference_prompt"):
+                base_prompt = (
+                    "Create an ORIGINAL song with similar genre, instruments, tempo feel and mood. "
+                    "Invent entirely new melodies, harmonies, phrases and arrangements; never copy "
+                    "the reference recording. Source production description: " +
+                    payload["reference_prompt"] + ". Additional direction: " + base_prompt
+                )
             if payload.get("auto_prompts"):
                 job["progress"] = "AI writing distinct prompt for song " + str(index+1)
                 try:
@@ -271,7 +301,17 @@ def generate():
     genre = str(payload.get("genre") or account["genre"]).strip()[:80]
     prompt = str(payload.get("prompt") or "").strip()[:1000]
     title_prefix = str(payload.get("title_prefix") or genre + " Track").strip()[:90]
-    if not prompt:
+    reference_song_id = str(payload.get("reference_song_id") or "").strip()
+    reference_prompt = ""
+    if reference_song_id:
+        with db() as conn:
+            reference = conn.execute("SELECT prompt FROM songs WHERE id=? AND account_id=?", (reference_song_id, account_id)).fetchone()
+        if not reference:
+            return jsonify(error="Reference song not found in this channel."), 404
+        reference_prompt = str(reference["prompt"] or "").strip()
+        if not reference_prompt:
+            return jsonify(error="This track has no saved generation prompt. Enter a style description manually."), 400
+    if not prompt and not reference_prompt:
         return jsonify(error="Enter a musical description."), 400
     if not shutil.which("ffprobe"):
         return jsonify(error="Install FFmpeg and ffprobe first."), 503
@@ -286,7 +326,7 @@ def generate():
                                 "count": count, "account_id": account_id, "completed": 0, "results": [], "failures": [],
                                 "progress": "Queued", "started": datetime.now().isoformat()}
     settings = {"count": count, "duration": duration, "genre": genre,
-                "prompt": prompt, "title_prefix": title_prefix,
+                "prompt": prompt, "reference_prompt": reference_prompt, "title_prefix": title_prefix,
                 "instrumental": bool(payload.get("instrumental", True)),
                 "account_id": account_id, "auto_prompts": bool(payload.get("auto_prompts", False)),
                 "auto_compile": bool(payload.get("auto_compile", False)),
