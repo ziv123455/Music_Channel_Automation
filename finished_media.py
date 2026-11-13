@@ -13,6 +13,7 @@ import uuid
 from flask import Blueprint, jsonify, request, send_from_directory
 from channel_features import DB, THUMBS, valid_account
 from particle_effects import build_particle_frames, STYLES, LEVELS, FPS
+from video_editor_effects import normalize_editor, cover_frame
 
 bp = Blueprint("finished_media", __name__, url_prefix="/api")
 DATA = DB.parent
@@ -51,6 +52,8 @@ def initialize():
             cn.execute("ALTER TABLE finished_videos ADD COLUMN particles TEXT NOT NULL DEFAULT 'none'")
         if "particle_intensity" not in columns:
             cn.execute("ALTER TABLE finished_videos ADD COLUMN particle_intensity TEXT NOT NULL DEFAULT 'normal'")
+        if "editor_settings" not in columns:
+            cn.execute("ALTER TABLE finished_videos ADD COLUMN editor_settings TEXT NOT NULL DEFAULT '{}'")
 
 
 def current_account(data=None):
@@ -227,9 +230,10 @@ def get_video(item_id):
     return send_from_directory(OUTPUT_VIDEOS, item["filename"], as_attachment=True)
 
 
-def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer, particles, particle_intensity):
+def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer, particles, particle_intensity, editor_settings):
     output = OUTPUT_VIDEOS / (output_id + ".mp4")
     particle_dir = None
+    preview_dir = None
     progress_path = None
     try:
         audio_path = MP3S / mp3["filename"]
@@ -239,8 +243,10 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
         job_change(job_id, status="running", progress="Preparing music video effects",
                    percent=0.0, rendered_seconds=0.0, total_seconds=duration,
                    elapsed_seconds=0.0, eta_seconds=None, speed=0.0)
+        preview_dir = tempfile.mkdtemp(prefix="music_video_cover_")
+        prepared_image = cover_frame(image_path, Path(preview_dir) / "cover.png", editor_settings["cover"])
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                "-loop", "1", "-framerate", "24", "-i", str(image_path),
+                "-loop", "1", "-framerate", "24", "-i", str(prepared_image),
                 "-stream_loop", "-1", "-i", str(audio_path)]
         background = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
                       "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p")
@@ -250,12 +256,22 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
             particle_dir = tempfile.mkdtemp(prefix="music_video_particles_")
             job_change(job_id, progress="Drawing looping " + particles + " particle animation")
             pattern = build_particle_frames(particle_dir, particles, particle_intensity)
-            args.extend(["-stream_loop", "-1", "-framerate", str(FPS), "-i", pattern])
+            args.extend(["-stream_loop", "-1", "-framerate", str(FPS * editor_settings["particles"]["speed"] / 100), "-i", pattern])
         if visualizer or particles != "none":
             filters.append("[0:v]" + background + "[bg]")
             if particles != "none":
-                filters.append("[2:v]fps=24,scale=1920:1080:flags=bilinear,format=rgba[fx]")
-                filters.append(video_label + "[fx]overlay=x=0:y=0:format=auto:shortest=1[scene]")
+                fx = editor_settings["particles"]
+                pw = int(1920 * fx["size"] / 100)
+                ph = int(1080 * fx["size"] / 100)
+                p_opacity = fx["opacity"] / 100
+                px = int(1920 * fx["x"] / 100 - pw / 2)
+                py = int(1080 * fx["y"] / 100 - ph / 2)
+                filters.append("[2:v]fps=24,scale=" + str(pw) + ":" + str(ph) +
+                               ":flags=bilinear,format=rgba,colorchannelmixer=aa=" +
+                               str(p_opacity) + (",gblur=sigma=" + str(fx["blur"])
+                               if fx["blur"] else "") + "[fx]")
+                filters.append(video_label + "[fx]overlay=x=" + str(px) + ":y=" + str(py) +
+                               ":format=auto:shortest=1[scene]")
                 video_label = "[scene]"
             if visualizer:
                 radial = (
@@ -270,8 +286,18 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
                     "colors=white:rate=24,format=gray,geq=lum=" + radial +
                     ",format=rgba,colorkey=0x000000:0.06:0.1[ring]"
                 )
-                filters.append(video_label + "[ring]overlay=(main_w-overlay_w)/2:"
-                               "(main_h-overlay_h)/2:shortest=1[v]")
+                ring = editor_settings["ring"]
+                rr = int(ring["color"][1:3], 16) / 255
+                gg = int(ring["color"][3:5], 16) / 255
+                bb = int(ring["color"][5:7], 16) / 255
+                rw = max(64, int(1920 * ring["size"] / 100))
+                ring_x = int(1920 * ring["x"] / 100 - rw / 2)
+                ring_y = int(1080 * ring["y"] / 100 - rw / 2)
+                filters.append("[ring]scale=" + str(rw) + ":" + str(rw) +
+                               ",colorchannelmixer=rr=" + str(rr) + ":gg=" + str(gg) +
+                               ":bb=" + str(bb) + ":aa=" + str(ring["opacity"] / 100) + "[ringedit]")
+                filters.append(video_label + "[ringedit]overlay=" + str(ring_x) + ":" +
+                               str(ring_y) + ":shortest=1[v]")
                 video_label = "[v]"
             args.extend(["-filter_complex", ";".join(filters),
                          "-map", video_label, "-map", "[aout]" if visualizer else "1:a:0"])
@@ -333,11 +359,11 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
         with connect() as cn:
             cn.execute("""INSERT INTO finished_videos
                 (id,account_id,title,filename,mp3_id,thumbnail_id,duration,created,
-                 cover_type,visualizer,particles,particle_intensity)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 cover_type,visualizer,particles,particle_intensity,editor_settings)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (output_id,account_id,title,output.name,mp3["id"],thumb["id"],
                  duration,datetime.now().isoformat(),cover_type,int(visualizer),
-                 particles,particle_intensity))
+                 particles,particle_intensity,json.dumps(editor_settings)))
         job_change(job_id, status="done", progress="Finished video saved", percent=100.0,
                    rendered_seconds=duration, total_seconds=duration,
                    elapsed_seconds=round(time.monotonic() - render_start, 1), eta_seconds=0)
@@ -349,6 +375,8 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
             progress_path.unlink(missing_ok=True)
         if particle_dir is not None:
             shutil.rmtree(particle_dir, ignore_errors=True)
+        if preview_dir is not None:
+            shutil.rmtree(preview_dir, ignore_errors=True)
 
 
 @bp.post("/finished-videos")
@@ -389,9 +417,13 @@ def create_video():
     particle_intensity = str(data.get("particle_intensity") or "normal")
     if particles not in STYLES or particle_intensity not in LEVELS:
         return jsonify(error="Invalid particle effect or intensity."), 400
+    try:
+        editor_settings = normalize_editor(data.get("editor_settings") or {})
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     job_id = new_job("video", account["id"], output_id)
     threading.Thread(target=render_video,
                      args=(job_id, account["id"], output_id, title, mp3, thumb, duration, cover_type,
-                           visualizer, particles, particle_intensity),
+                           visualizer, particles, particle_intensity, editor_settings),
                      daemon=True).start()
     return jsonify(job_id=job_id, id=output_id), 202
