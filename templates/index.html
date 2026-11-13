@@ -33,6 +33,11 @@ input[type=text],input[type=email],input[type=number],select{width:100%}input[ty
 .song-folder .row button{padding:7px 9px;font-size:12px}
 .song-folder .track.dragging{opacity:.4}
 .folder-empty{border:1px dashed #454963;border-radius:8px;padding:12px;color:#959bb8;font-size:12px}
+.mix-order{display:flex;flex-direction:column;gap:7px;margin:12px 0}
+.mix-order-item{display:flex;align-items:center;gap:10px;padding:9px;border:1px solid #494b68;border-radius:9px;background:#202337}
+.mix-order-item>span{flex:1;min-width:0;overflow-wrap:anywhere}
+.mix-order-item button{padding:6px 11px}
+
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-width:520px;aspect-ratio:16/9;object-fit:cover;border-radius:10px;border:1px solid #454762}
 .pill{display:inline-block;background:#30344d;border-radius:10px;padding:5px 9px;font-size:12px}
@@ -44,7 +49,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 </header>
 <nav class="tabs">
 <button class="tab active" data-tab="generate">Music Generation</button>
-<button class="tab" data-tab="library">Song Library</button><button class="tab" data-tab="mixes">Compilations</button>
+<button class="tab" data-tab="library">Song Library</button><button class="tab" data-tab="mp3s">Finished MP3s</button><button class="tab" data-tab="editor">Video Editor</button><button class="tab" data-tab="mixes">Compilations</button>
 <button class="tab" data-tab="thumbnail">Thumbnail Studio</button>
 <button class="tab" data-tab="accounts">Account Manager</button>
 </nav>
@@ -79,7 +84,38 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 
 <div class="tabpane" id="pane-library">
 <section class="panel"><h2>Import songs for this channel</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Optional song title"><button>Import audio</button></form><p id="uploadStatus" class="muted"></p></section>
-<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks for compilations, use Create Similar to make new songs inspired by a saved track prompt, or delete unwanted songs. Active compilation drafts are protected.</p><div class="folder-toolbar"><input id="newFolderName" type="text" maxlength="80" placeholder="New folder name"><button type="button" id="createSongFolder">+ Create Folder</button></div><div id="songs" class="song-folders">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div></section>
+<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks for compilations, use Create Similar to make new songs inspired by a saved track prompt, or delete unwanted songs. Active compilation drafts are protected.</p><div class="folder-toolbar"><input id="newFolderName" type="text" maxlength="80" placeholder="New folder name"><button type="button" id="createSongFolder">+ Create Folder</button></div><div id="songs" class="song-folders">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div>
+<div class="status">
+<h3>Build a finished MP3 from selected songs</h3>
+<p class="muted">Tick songs above. Move tracks up or down to set their exact playback order; transitions smoothly overlap the end of each track with the next.</p>
+<div id="mp3SongOrder" class="mix-order">Select songs above to build your MP3.</div>
+<div class="grid">
+<div><label for="mp3Title">Finished MP3 title</label><input id="mp3Title" value="My Music Mix" maxlength="120"></div>
+<div><label for="mp3Fade">Crossfade between songs (seconds)</label><input type="number" id="mp3Fade" min="0" max="12" step="0.5" value="3"></div>
+</div>
+<div class="row"><button type="button" id="buildFinishedMp3">Create finished MP3</button><span id="mp3CreateMessage" class="muted"></span></div>
+</div>
+</section>
+</div>
+<div class="tabpane" id="pane-mp3s">
+<section class="panel"><h2>Finished MP3s</h2><p class="muted">Your completed audio mixes are stored here for playback, download and use in the Video Editor.</p>
+<div id="finishedMp3Library">Loading finished MP3s...</div></section>
+</div>
+<div class="tabpane" id="pane-editor">
+<section class="panel"><h2>Video Editor</h2><p class="muted">Select one finished MP3 and one saved thumbnail. Choose a video duration longer than the MP3; its audio will loop until the chosen end time while the thumbnail remains on screen.</p>
+<form id="finishedVideoForm">
+<div class="grid">
+<div><label for="editorMp3">Finished MP3</label><select id="editorMp3" required></select></div>
+<div><label for="editorThumbnail">Thumbnail</label><select id="editorThumbnail" required></select></div>
+<div><label for="editorHours">Video duration (hours)</label><input id="editorHours" type="number" min="0" max="24" value="1"></div>
+<div><label for="editorMinutes">Additional minutes</label><input id="editorMinutes" type="number" min="0" max="59" value="0"></div>
+<div><label for="editorVideoTitle">Video title</label><input id="editorVideoTitle" type="text" maxlength="120" value="My Music Video"></div>
+</div>
+<div id="editorPreview" class="muted"></div>
+<button type="submit" id="renderFinishedVideo">Render Video</button><span id="videoCreateMessage" class="muted"></span>
+</form>
+</section>
+<section class="panel"><h2>Finished Videos</h2><div id="finishedVideoLibrary">Loading finished videos...</div></section>
 </div>
 <div class="tabpane" id="pane-mixes">
 <section class="panel"><h2>Step 2 — Build a compilation</h2>
@@ -151,13 +187,13 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 </main>
 <script>
 const $=id=>document.getElementById(id), api='/api';
-let accounts=[], activeAccount=localStorage.getItem('music_channel_active')||'default', savedThumbnail='', selectedThumbId='', selectedReferenceId='', selectedTrackIds=[], similarSongId='';
+let accounts=[], activeAccount=localStorage.getItem('music_channel_active')||'default', savedThumbnail='', selectedThumbId='', selectedReferenceId='', selectedTrackIds=[], similarSongId='', mediaMp3s=[];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padStart(2,'0');
 async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const text=await r.text();let j;try{j=JSON.parse(text)}catch(e){throw Error('Server returned HTTP '+r.status+' instead of JSON. Check the Flask PowerShell window for the underlying error.')}if(!r.ok)throw Error(j.error||'Request failed (HTTP '+r.status+')');return j}
 function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
-function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';selectedTrackIds=[];$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';selectedTrackIds=[];mediaMp3s=[];$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 async function loadAccounts(){
  accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
  renderAccounts();applyAccount();
@@ -170,7 +206,7 @@ $('channelSwitcher').onchange=e=>{activeAccount=e.target.value;applyAccount()};
 document.querySelectorAll('.tab[data-tab]').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('.tab[data-tab]').forEach(x=>x.classList.toggle('active',x===b));
  document.querySelectorAll('.tabpane').forEach(p=>p.classList.toggle('active',p.id==='pane-'+b.dataset.tab));
- if(b.dataset.tab==='library'||b.dataset.tab==='mixes')refresh();if(b.dataset.tab==='thumbnail'){loadGallery();loadReferences();checkImageAi();checkVisionAi()}
+ if(b.dataset.tab==='library'||b.dataset.tab==='mixes')refresh();if(b.dataset.tab==='mp3s'||b.dataset.tab==='editor')loadFinishedMedia();if(b.dataset.tab==='thumbnail'){loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 });
 async function connections(){
  try{const j=await read('/generation/connection');$('aceStatus').className='status '+(j.connected?'good':'warning');$('aceStatus').textContent=j.connected?'✓ ACE-Step connected':'ACE-Step disconnected: '+esc(j.error)}catch(e){$('aceStatus').textContent=e.message}
@@ -205,7 +241,7 @@ async function refresh(){
   return '<section class="song-folder" data-folder-id="'+esc(group.id)+'"><div class="song-folder-header"><h3>📁 '+esc(group.name)+' <span class="pill">'+tracks.length+'</span></h3><div class="row">'+header+'</div></div><div class="folder-content">'+(tracks.length?tracks.map(s=>'<div class="track" data-song-id="'+esc(s.id)+'"><span class="song-drag-handle" draggable="true" data-id="'+esc(s.id)+'" title="Drag song to another folder" aria-label="Drag song">⠿</span><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div class="track-details"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'<div class="muted small">No saved AI prompt</div>')+'<div class="row"><button type="button" class="renameTrack tab" data-id="'+esc(s.id)+'">Rename</button><button type="button" class="similarTrack tab" data-id="'+esc(s.id)+'" '+(s.prompt?'':'disabled')+'>Create Similar</button><button type="button" class="deleteTrack tab" data-id="'+esc(s.id)+'">Delete</button></div></div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(accountAtStart)+'"></audio></div>').join(''):'<div class="folder-empty">Drop songs here</div>')+'</div></section>';
  };
  $('songs').innerHTML=groups.map(folderCard).join('');
- document.querySelectorAll('.trackPick').forEach(i=>i.onchange=updateSelection);updateSelection();
+ document.querySelectorAll('.trackPick').forEach(i=>i.onchange=e=>{const id=e.target.value;if(e.target.checked){if(!selectedTrackIds.includes(id))selectedTrackIds.push(id)}else{selectedTrackIds=selectedTrackIds.filter(x=>x!==id)}updateSelection()});updateSelection();
  document.querySelectorAll('.similarTrack').forEach(b=>b.onclick=()=>{
    const s=lib.find(item=>item.id===b.dataset.id);if(!s||!s.prompt)return;
    similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
@@ -273,7 +309,62 @@ $('createSongFolder').onclick=async()=>{
  const name=$('newFolderName').value.trim();if(!name){$('libraryMessage').textContent='Enter a folder name first';return}
  try{await folderRequest('/song-folders','POST',{account_id:activeAccount,name});$('newFolderName').value='';$('libraryMessage').textContent='Folder created';await refresh()}catch(e){$('libraryMessage').textContent=e.message}
 };
-function updateSelection(){selectedTrackIds=[...document.querySelectorAll('.trackPick:checked')].map(x=>x.value);$('selectionStats').textContent=selectedTrackIds.length+' tracks selected for manual compilation';}
+function updateSelection(){
+ const checked=[...document.querySelectorAll('.trackPick:checked')].map(x=>x.value);
+ selectedTrackIds=[...selectedTrackIds.filter(x=>checked.includes(x)),...checked.filter(x=>!selectedTrackIds.includes(x))];
+ $('selectionStats').textContent=selectedTrackIds.length+' tracks selected for manual compilation or MP3 mixing';
+ renderMp3Order();
+}
+function renderMp3Order(){
+ const box=$('mp3SongOrder');const checked=new Map([...document.querySelectorAll('.track[data-song-id]')].map(el=>[el.dataset.songId,el.querySelector('strong')?.textContent||el.dataset.songId]));
+ box.innerHTML=selectedTrackIds.length?selectedTrackIds.map((id,i)=>'<div class="mix-order-item" draggable="true" data-order-id="'+esc(id)+'"><strong>'+(i+1)+'.</strong><span>'+esc(checked.get(id)||id)+'</span><button class="tab" type="button" data-move="up" data-id="'+esc(id)+'" '+(i===0?'disabled':'')+'>↑</button><button class="tab" type="button" data-move="down" data-id="'+esc(id)+'" '+(i===selectedTrackIds.length-1?'disabled':'')+'>↓</button></div>').join(''):'Select songs above to build your MP3.';
+ box.querySelectorAll('[data-move]').forEach(b=>b.onclick=()=>{const i=selectedTrackIds.indexOf(b.dataset.id),other=b.dataset.move==='up'?i-1:i+1;if(other<0||other>=selectedTrackIds.length)return;[selectedTrackIds[i],selectedTrackIds[other]]=[selectedTrackIds[other],selectedTrackIds[i]];renderMp3Order()});
+ box.querySelectorAll('[data-order-id]').forEach(el=>{
+   el.addEventListener('dragstart',e=>{e.dataTransfer.setData('application/x-mp3-order',el.dataset.orderId);e.dataTransfer.effectAllowed='move'});
+   el.addEventListener('dragover',e=>{if(e.dataTransfer.types.includes('application/x-mp3-order'))e.preventDefault()});
+   el.addEventListener('drop',e=>{e.preventDefault();const source=e.dataTransfer.getData('application/x-mp3-order');const src=selectedTrackIds.indexOf(source),dest=selectedTrackIds.indexOf(el.dataset.orderId);if(src<0||dest<0||src===dest)return;selectedTrackIds.splice(src,1);selectedTrackIds.splice(dest,0,source);renderMp3Order()});
+ });
+}
+$('buildFinishedMp3').onclick=async()=>{
+ if(!selectedTrackIds.length){$('mp3CreateMessage').textContent='Select at least one song.';return}
+ $('buildFinishedMp3').disabled=true;$('mp3CreateMessage').textContent='Starting audio mix...';
+ try{await post('/finished-mp3s',{account_id:activeAccount,title:$('mp3Title').value,track_ids:selectedTrackIds,crossfade:Number($('mp3Fade').value)});$('mp3CreateMessage').textContent='Audio mixing started. Open Finished MP3s to monitor it.';document.querySelector('.tab[data-tab="mp3s"]').click()}
+ catch(e){$('mp3CreateMessage').textContent=e.message}
+ finally{$('buildFinishedMp3').disabled=false}
+};
+async function loadFinishedMedia(){
+ const account=activeAccount;
+ try{
+  const [mp3s,vids,thumbs,tasks]=await Promise.all([
+    read('/finished-mp3s?account_id='+encodeURIComponent(account)),
+    read('/finished-videos?account_id='+encodeURIComponent(account)),
+    read('/thumbnails/library?account_id='+encodeURIComponent(account)),
+    read('/finished-media/jobs?account_id='+encodeURIComponent(account))
+  ]);
+  if(account!==activeAccount)return;
+  mediaMp3s=mp3s;
+  const active=tasks.filter(j=>j.status==='queued'||j.status==='running');
+  const taskHtml=active.map(j=>'<div class="status"><strong>'+esc(j.kind==='mp3'?'MP3 mixing':'Video rendering')+'</strong> — '+esc(j.progress)+'</div>').join('');
+  const recentErrors=tasks.filter(j=>j.status==='error').slice(0,3).map(j=>'<div class="status error">'+esc(j.progress)+'</div>').join('');
+  $('finishedMp3Library').innerHTML=taskHtml+recentErrors+(mp3s.length?mp3s.map(m=>'<div class="status"><strong>'+esc(m.title)+'</strong> <span class="pill">'+dur(m.duration)+'</span><audio controls preload="none" style="display:block;width:100%;margin:10px 0" src="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'"></audio><a href="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'&download=1">Download MP3</a></div>').join(''):'No finished MP3s yet.');
+  $('editorMp3').innerHTML='<option value="">Select a finished MP3</option>'+mp3s.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.title)+' ('+dur(m.duration)+')</option>').join('');
+  $('editorThumbnail').innerHTML='<option value="">Select a thumbnail</option>'+thumbs.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.title)+'</option>').join('');
+  $('finishedVideoLibrary').innerHTML=tasks.filter(j=>j.kind==='video'&&j.status!=='done').map(j=>'<div class="status">'+esc(j.status)+': '+esc(j.progress)+'</div>').join('')+(vids.length?vids.map(v=>'<div class="status"><strong>'+esc(v.title)+'</strong> · '+dur(v.duration)+' <a href="/api/finished-videos/'+encodeURIComponent(v.id)+'/video?account_id='+encodeURIComponent(account)+'">Download MP4</a></div>').join(''):'No finished videos yet.');
+  $('editorPreview').textContent='Choose a finished MP3 and set the video length. The MP3 loops continuously to fill the video.';
+ }catch(e){$('finishedMp3Library').textContent=e.message;$('finishedVideoLibrary').textContent=e.message}
+}
+$('finishedVideoForm').onsubmit=async e=>{
+ e.preventDefault();
+ const seconds=(Number($('editorHours').value)*60+Number($('editorMinutes').value))*60;
+ const item=mediaMp3s.find(m=>m.id===$('editorMp3').value);
+ if(!item){$('videoCreateMessage').textContent='Select a finished MP3.';return}
+ if(seconds<=item.duration){$('videoCreateMessage').textContent='Video must be longer than the selected MP3 ('+dur(item.duration)+').';return}
+ $('renderFinishedVideo').disabled=true;$('videoCreateMessage').textContent='Starting video render...';
+ try{await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,thumbnail_id:$('editorThumbnail').value,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
+ catch(e){$('videoCreateMessage').textContent=e.message}
+ finally{$('renderFinishedVideo').disabled=false}
+};
+setInterval(()=>{const pane=$('pane-mp3s'),editor=$('pane-editor');if(pane.classList.contains('active')||editor.classList.contains('active'))loadFinishedMedia()},6000);
 async function renderDraft(id){
  const dropdown=[...document.querySelectorAll('.mixThumb')].find(x=>x.dataset.id===id);
  const thumb=dropdown?.value||selectedThumbId;
