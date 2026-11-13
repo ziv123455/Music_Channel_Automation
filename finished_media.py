@@ -266,10 +266,10 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
             raise RuntimeError("No rendered video was created.")
         with connect() as cn:
             cn.execute("""INSERT INTO finished_videos
-                (id,account_id,title,filename,mp3_id,thumbnail_id,duration,created)
-                VALUES (?,?,?,?,?,?,?,?)""",
+                (id,account_id,title,filename,mp3_id,thumbnail_id,duration,created,cover_type,visualizer)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (output_id,account_id,title,output.name,mp3["id"],thumb["id"],
-                 duration,datetime.now().isoformat()))
+                 duration,datetime.now().isoformat(),cover_type,int(visualizer)))
         job_change(job_id, status="done", progress="Finished video saved")
     except Exception as exc:
         output.unlink(missing_ok=True)
@@ -293,8 +293,14 @@ def create_video():
     with connect() as cn:
         mp3_row = cn.execute("SELECT * FROM finished_mp3s WHERE id=? AND account_id=?",
                             (data.get("mp3_id"), account["id"])).fetchone()
-        thumb_row = cn.execute("SELECT * FROM thumbnail_library WHERE id=? AND account_id=?",
-                              (data.get("thumbnail_id"), account["id"])).fetchone()
+        cover_type = str(data.get("cover_type") or "thumbnail")
+        if cover_type not in ("thumbnail", "reference"):
+            return jsonify(error="Invalid cover type."), 400
+        cover_table = "thumbnail_library" if cover_type == "thumbnail" else "thumbnail_references"
+        thumb_row = cn.execute(
+            "SELECT * FROM " + cover_table + " WHERE id=? AND account_id=?",
+            (data.get("thumbnail_id"), account["id"])
+        ).fetchone()
     if not mp3_row or not thumb_row:
         return jsonify(error="Choose a finished MP3 and saved thumbnail for this channel."), 400
     mp3 = dict(mp3_row)
@@ -303,8 +309,9 @@ def create_video():
         return jsonify(error="Video duration must be longer than the selected MP3."), 400
     output_id = uuid.uuid4().hex
     title = safe_title(data.get("title"), "Music Video")
+    visualizer = data.get("visualizer") is True
     job_id = new_job("video", account["id"], output_id)
     threading.Thread(target=render_video,
-                     args=(job_id, account["id"], output_id, title, mp3, thumb, duration),
+                     args=(job_id, account["id"], output_id, title, mp3, thumb, duration, cover_type, visualizer),
                      daemon=True).start()
     return jsonify(job_id=job_id, id=output_id), 202
