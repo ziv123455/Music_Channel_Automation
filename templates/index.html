@@ -49,6 +49,19 @@ input[type=text],input[type=email],input[type=number],select{width:100%}input[ty
 @keyframes particle-rise{from{transform:translate(0,70px)}to{transform:translate(var(--dx),-85px)}}
 @keyframes particle-glow{from{transform:translate(0,0);opacity:.15}to{transform:translate(var(--dx),var(--dy));opacity:var(--po)}}
 @media(prefers-reduced-motion:reduce){.particle-dot{animation:none}}
+.editor-stage{width:100%;max-width:880px;aspect-ratio:16/9;position:relative;overflow:hidden;background:#0d101c;border:1px solid #5f5f7f;border-radius:12px;touch-action:none;cursor:move}
+.editor-stage>img{position:absolute;max-width:none;object-fit:fill;pointer-events:none}
+.editor-stage .particle-cover-dots{border-radius:0}
+.editor-ring-preview{position:absolute;border:3px solid #fff;border-radius:50%;aspect-ratio:1;box-shadow:0 0 14px currentColor,inset 0 0 12px currentColor;transform:translate(-50%,-50%);pointer-events:none;animation:editor-ring-pulse 1.15s ease-in-out infinite alternate}
+@keyframes editor-ring-pulse{from{box-shadow:0 0 9px currentColor,inset 0 0 4px currentColor}to{box-shadow:0 0 26px currentColor,inset 0 0 13px currentColor}}
+.editor-control-panel{margin:12px 0;border:1px solid #494b6b;border-radius:10px;padding:14px}
+.editor-control-panel h3{margin:0 0 8px}
+.editor-sliders{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px}
+.editor-slider-item label{display:flex;justify-content:space-between;gap:8px}
+.editor-slider-item input[type=range]{width:100%;padding:0;accent-color:#a67dff}
+.editor-slider-item input[type=color]{width:100%;height:37px;padding:3px;cursor:pointer}
+.editor-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.editor-toolbar select{max-width:220px}
 .render-progress-card{border:1px solid #515573;background:#1a1d31;border-radius:12px;padding:15px;margin:12px 0}
 .render-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .render-meter{height:15px;background:#35394f;border-radius:999px;overflow:hidden;margin:12px 0}
@@ -145,7 +158,16 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <input type="hidden" id="editorParticles" value="none">
 <label for="editorParticleIntensity">Particle density</label>
 <select id="editorParticleIntensity"><option value="subtle">Subtle</option><option value="normal" selected>Normal</option><option value="strong">Strong</option></select>
-<div id="editorCoverPreview" style="margin:12px 0;display:none;position:relative;max-width:520px"><img id="editorCoverImage" class="thumb" alt="Selected video background cover"><div id="editorCoverParticles" class="particle-cover-dots" data-kind="none"></div></div>
+<h3>Visual composition editor</h3>
+<p class="muted">Drag directly on the preview to move the selected layer, or use the exact sliders below. Changes are included in the exported video. The ring in the editor is an animated placement guide; its actual audio response appears after rendering.</p>
+<div class="editor-toolbar"><label for="editorDragLayer">Drag to move</label>
+<select id="editorDragLayer"><option value="cover">Background cover</option><option value="particles">Particle layer</option><option value="ring">Circular audio visualizer</option></select>
+<button type="button" id="editorResetAll" class="tab">Reset all effects</button>
+<button type="button" id="editorResetLayer" class="tab">Reset selected layer</button></div>
+<div id="editorCoverPreview" style="display:none;margin:12px 0">
+<div id="editorStage" class="editor-stage"><img id="editorCoverImage" alt="Selected video background cover"><div id="editorCoverParticles" class="particle-cover-dots" data-kind="none"></div><div id="editorRingOverlay" class="editor-ring-preview" style="display:none"></div></div>
+</div>
+<div id="editorControls"></div>
 <div id="editorPreview" class="muted"></div>
 <button type="submit" id="renderFinishedVideo">Render Video</button><span id="videoCreateMessage" class="muted"></span>
 </form>
@@ -368,6 +390,117 @@ $('buildFinishedMp3').onclick=async()=>{
  catch(e){$('mp3CreateMessage').textContent=e.message}
  finally{$('buildFinishedMp3').disabled=false}
 };
+const editorDefaults={
+ cover:{zoom:1,x:50,y:50,fit:'cover',brightness:100,contrast:100,saturation:100,sharpness:100,blur:0,warmth:0,hue:0,vignette:0},
+ particles:{x:50,y:50,size:100,opacity:85,speed:100,brightness:100,blur:0,color:'#ffffff'},
+ ring:{x:50,y:50,size:28,opacity:90,color:'#ffffff'}
+};
+let editorSettings=JSON.parse(JSON.stringify(editorDefaults));
+const editorFields={
+ cover:[['zoom','Zoom',.5,3,.05],['x','Horizontal position',0,100,1],['y','Vertical position',0,100,1],
+ ['fit','Image fit'],['brightness','Brightness',0,200,1],['contrast','Contrast',0,200,1],
+ ['saturation','Saturation',0,200,1],['sharpness','Sharpness',0,300,1],['blur','Blur',0,15,.5],
+ ['warmth','Warmth',-100,100,1],['hue','Hue shift',-180,180,1],['vignette','Vignette',0,100,1]],
+ particles:[['x','Horizontal position',0,100,1],['y','Vertical position',0,100,1],['size','Effect scale',20,180,1],
+ ['opacity','Opacity',0,100,1],['speed','Animation speed',25,300,5],
+ ['brightness','Brightness',0,200,1],['blur','Softness / blur',0,15,.5],['color','Particle color']],
+ ring:[['x','Horizontal position',0,100,1],['y','Vertical position',0,100,1],
+ ['size','Circle diameter',8,75,1],['opacity','Opacity',0,100,1],['color','Ring color']]
+};
+function editorFieldsMarkup(layer,caption){
+ return '<section class="editor-control-panel"><h3>'+caption+'</h3><div class="editor-sliders">'+
+ editorFields[layer].map(field=>{
+  const [key,label,min,max,step]=field;
+  const id='ed-'+layer+'-'+key,value=editorSettings[layer][key];
+  if(key==='color')return '<div class="editor-slider-item"><label for="'+id+'">'+label+'</label><input type="color" id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'" value="'+value+'"></div>';
+  if(key==='fit')return '<div class="editor-slider-item"><label for="'+id+'">'+label+'</label><select id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'"><option value="cover"'+(value==='cover'?' selected':'')+'>Fill / crop</option><option value="contain"'+(value==='contain'?' selected':'')+'>Fit whole image</option></select></div>';
+  return '<div class="editor-slider-item"><label for="'+id+'">'+label+' <output id="'+id+'-value">'+value+'</output></label><input type="range" id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"></div>';
+ }).join('')+'</div></section>';
+}
+function renderEditorControls(){
+ $('editorControls').innerHTML=editorFieldsMarkup('cover','Background: framing and photo adjustments')+
+  editorFieldsMarkup('particles','Particles: appearance and motion')+
+  editorFieldsMarkup('ring','Circle: size, position and color');
+ $('editorControls').querySelectorAll('[data-edlayer]').forEach(control=>{
+  control.addEventListener('input',()=>{
+   const layer=control.dataset.edlayer,key=control.dataset.edkey;
+   editorSettings[layer][key]=(key==='fit'||key==='color')?control.value:Number(control.value);
+   const out=$(control.id+'-value');if(out)out.textContent=control.value;
+   updateEditorPreview();
+  });
+ });
+}
+function updateEditorControlValues(){
+ $('editorControls').querySelectorAll('[data-edlayer]').forEach(control=>{
+  control.value=editorSettings[control.dataset.edlayer][control.dataset.edkey];
+  const out=$(control.id+'-value');if(out)out.textContent=control.value;
+ });
+}
+function updateEditorPreview(){
+ const stage=$('editorStage'),cover=$('editorCoverImage');
+ if(!stage||!cover)return;
+ const w=stage.clientWidth,h=stage.clientHeight;
+ const cs=editorSettings.cover,ps=editorSettings.particles,rs=editorSettings.ring;
+ const iw=cover.naturalWidth||1920,ih=cover.naturalHeight||1080;
+ const factor=(cs.fit==='cover'?Math.max(w/iw,h/ih):Math.min(w/iw,h/ih))*cs.zoom;
+ const cw=iw*factor,ch=ih*factor;
+ cover.style.width=cw+'px';cover.style.height=ch+'px';
+ cover.style.left=((w-cw)*cs.x/100)+'px';cover.style.top=((h-ch)*cs.y/100)+'px';
+ cover.style.filter='brightness('+cs.brightness+'%) contrast('+cs.contrast+'%) saturate('+cs.saturation+'%) blur('+(cs.blur*w/1920)+'px) hue-rotate('+cs.hue+'deg)';
+ cover.style.boxShadow='none';
+ const layer=$('editorCoverParticles');
+ layer.style.left=ps.x+'%';layer.style.top=ps.y+'%';
+ layer.style.width=ps.size+'%';layer.style.height=ps.size+'%';
+ layer.style.transform='translate(-50%,-50%)';
+ layer.style.opacity=ps.opacity/100;
+ layer.style.filter='brightness('+ps.brightness+'%) blur('+(ps.blur*w/1920)+'px)';
+ layer.style.setProperty('--particle-speed',ps.speed/100);
+ layer.querySelectorAll('.particle-dot').forEach(dot=>{dot.style.animationDuration=(parseFloat(dot.style.getPropertyValue('--pt'))/(ps.speed/100))+'s';dot.style.backgroundColor=ps.color});
+ const ring=$('editorRingOverlay');
+ ring.style.display=$('editorCircularVisualizer').checked?'block':'none';
+ ring.style.left=rs.x+'%';ring.style.top=rs.y+'%';
+ ring.style.width=rs.size+'%';ring.style.color=rs.color;
+ ring.style.borderColor=rs.color;ring.style.opacity=rs.opacity/100;
+ ring.style.borderWidth=Math.max(2,w/260)+'px';
+ const tint=cs.warmth/100;
+ cover.style.filter+=' sepia('+(Math.abs(tint)*20)+'%)';
+ if(cs.vignette){
+  stage.style.boxShadow='inset 0 0 '+(cs.vignette*w/100)+'px rgba(0,0,0,.85)';
+ }else stage.style.boxShadow='none';
+}
+function resetEditor(layer){
+ editorSettings[layer]=JSON.parse(JSON.stringify(editorDefaults[layer]));
+ updateEditorControlValues();updateEditorPreview();
+}
+$('editorResetAll').onclick=()=>{editorSettings=JSON.parse(JSON.stringify(editorDefaults));updateEditorControlValues();updateEditorPreview()};
+$('editorResetLayer').onclick=()=>resetEditor($('editorDragLayer').value);
+$('editorCircularVisualizer').onchange=updateEditorPreview;
+$('editorCoverImage').onload=updateEditorPreview;
+$('editorStage').addEventListener('pointerdown',event=>{
+ if(event.button!==0)return;
+ const stage=$('editorStage'),which=$('editorDragLayer').value;
+ const rect=stage.getBoundingClientRect();
+ const start={x:event.clientX,y:event.clientY},initial={...editorSettings[which]};
+ stage.setPointerCapture(event.pointerId);
+ const move=e=>{
+  const dx=(e.clientX-start.x)/rect.width*100,dy=(e.clientY-start.y)/rect.height*100;
+  if(which==='cover'){
+   editorSettings[which].x=Math.max(0,Math.min(100,initial.x+dx));
+   editorSettings[which].y=Math.max(0,Math.min(100,initial.y+dy));
+  }else{
+   editorSettings[which].x=Math.max(0,Math.min(100,initial.x+dx));
+   editorSettings[which].y=Math.max(0,Math.min(100,initial.y+dy));
+  }
+  updateEditorControlValues();updateEditorPreview();
+ };
+ const done=()=>{stage.removeEventListener('pointermove',move);stage.removeEventListener('pointerup',done);stage.removeEventListener('pointercancel',done)};
+ stage.addEventListener('pointermove',move);
+ stage.addEventListener('pointerup',done);
+ stage.addEventListener('pointercancel',done);
+});
+window.addEventListener('resize',updateEditorPreview);
+renderEditorControls();
+
 const particlePalettes={dust:['#f3dba6','rgba(255,211,117,.45)'],fireflies:['#d4ff8d','rgba(151,255,88,.65)'],snow:['#ebf4ff','rgba(226,240,255,.5)'],embers:['#ff9959','rgba(255,98,27,.55)']};
 function drawParticleDots(container,kind,count){
  container.dataset.kind=kind;
@@ -449,7 +582,7 @@ async function loadFinishedMedia(){
       '/api/reference/'+encodeURIComponent(item.filename)+'?account_id='+encodeURIComponent(account);
   };
   $('editorThumbnail').onchange();
-  updateParticlePreview();
+  updateParticlePreview();updateEditorPreview();
   $('finishedVideoLibrary').innerHTML=tasks.filter(j=>j.kind==='video'&&j.status!=='done').map(j=>'<div class="status">'+esc(j.status)+': '+esc(j.progress)+'</div>').join('')+(vids.length?vids.map(v=>'<div class="status"><strong>'+esc(v.title)+'</strong> · '+dur(v.duration)+' <a href="/api/finished-videos/'+encodeURIComponent(v.id)+'/video?account_id='+encodeURIComponent(account)+'">Download MP4</a></div>').join(''):'No finished videos yet.');
   $('editorPreview').textContent='Choose a finished MP3 and set the video length. The MP3 loops continuously to fill the video.';
  }catch(e){$('finishedMp3Library').textContent=e.message;$('finishedVideoLibrary').textContent=e.message}
@@ -464,7 +597,7 @@ $('finishedVideoForm').onsubmit=async e=>{
  try{
   const cover=$('editorThumbnail').value.split(':');
   if(cover.length!==2||!['thumbnail','reference'].includes(cover[0]))throw Error('Select a background cover.');
-  await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,cover_type:cover[0],thumbnail_id:cover[1],visualizer:$('editorCircularVisualizer').checked,particles:$('editorParticles').value,particle_intensity:$('editorParticleIntensity').value,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
+  await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,cover_type:cover[0],thumbnail_id:cover[1],visualizer:$('editorCircularVisualizer').checked,particles:$('editorParticles').value,particle_intensity:$('editorParticleIntensity').value,editor_settings:editorSettings,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
  catch(e){$('videoCreateMessage').textContent=e.message}
  finally{$('renderFinishedVideo').disabled=false}
 };
