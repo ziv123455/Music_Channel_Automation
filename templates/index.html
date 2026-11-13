@@ -82,7 +82,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 
 <div class="tabpane" id="pane-thumbnail">
 <section class="panel"><h2>Step 3 — AI thumbnail generator</h2>
-<p class="muted">Choose Remake Reference to let Ollama look at your image, then send ONLY Ollama’s newly imagined prompt to Forge. No reference image is passed to Forge in Remake or Style modes. Close Reference Variation uses the actual image.</p>
+<p class="muted">Default workflow: Ollama visually describes your reference, identifies its artistic style, and writes a standalone prompt. Forge gets only that text and creates its own interpretation. The original image is never sent to Forge in the default mode.</p>
 <div id="imageAiStatus" class="status muted">Checking local image AI...</div>
 <form id="referenceForm">
 <label>Upload example thumbnail (JPG / PNG / WebP)</label>
@@ -92,10 +92,11 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <h3>Reference library</h3><div id="referenceLibrary" class="grid"></div>
 <form id="imageAiForm">
 <div id="visionStatus" class="status muted">Checking Ollama vision model...</div>
-<label>Generation mode</label><select id="imageMode"><option value="style" selected>Style to new scene (recommended, txt2img)</option><option value="remake">Remake reference (Ollama prompt only; original composition)</option><option value="img2img">Close reference variation (minimal changes)</option><option value="text">Text only (no reference needed)</option></select>
-<label><input id="autoVisionPrompt" type="checkbox" checked> Automatically let Ollama analyze the reference before generation</label>
+<label>Generation mode</label><select id="imageMode"><option value="remake" selected>Describe reference then reinterpret (prompt only)</option><option value="style">Style to completely new subject (prompt only)</option><option value="img2img">Close reference variation (minimal changes)</option><option value="text">Text only (no reference needed)</option></select>
+<label><input id="autoVisionPrompt" type="checkbox" checked> Ask Ollama to describe the reference and write the image prompt automatically</label>
 <p><button type="button" id="suggestImagePrompt">Analyze reference with Ollama and preview prompt</button></p>
 <label for="imageDirection">What should change in the remake? (optional)</label><textarea id="imageDirection" placeholder="e.g. redesign the scholar, geometry and lighting while keeping the framed painting composition" style="min-height:64px"></textarea>
+<div id="referenceDescription" class="status muted" style="display:none"></div>
 <div id="styleSummary" class="status muted" style="display:none"></div>
 <label>Design prompt (editable after AI analysis)</label><textarea id="imagePrompt" required>Original peaceful classical music cover artwork, a majestic grand piano inside a candlelit concert hall, warm golden lighting, elegant cinematic atmosphere, beautifully composed, no text.</textarea>
 <label>Negative prompt (editable)</label><textarea id="imageNegative" placeholder="blurry, duplicate subjects, bad anatomy, distorted objects, text, watermark">blurry, low quality, duplicate subjects, extra limbs, distorted instruments, text, logo, watermark</textarea>
@@ -251,6 +252,7 @@ async function analyzeReference(){
  if(activeAccount!==originalAccount||selectedReferenceId!==originalRef)throw Error('Channel or reference changed. Please retry.');
  $('imagePrompt').value=j.prompt;
  $('imageNegative').value=j.negative_prompt;
+ $('referenceDescription').style.display=j.reference_description?'block':'none';$('referenceDescription').textContent=j.reference_description?'Ollama image description: '+j.reference_description:'';
  $('styleSummary').style.display='block';$('styleSummary').textContent='Reference style: '+(j.style_summary||'Analyzed by Ollama');
  return j;
 }
@@ -260,12 +262,12 @@ $('suggestImagePrompt').onclick=async()=>{
  catch(e){$('imageAiMessage').textContent=e.message}
  finally{btn.disabled=false}
 };
-function updateImageMode(){const mode=$('imageMode').value;$('imageDirection').style.display=(mode==='remake'||mode==='img2img')?'block':'none';document.querySelector('label[for=imageDirection]').style.display=(mode==='remake'||mode==='img2img')?'block':'none';$('strengthContainer').style.display=mode==='img2img'?'block':'none';$('autoVisionPrompt').disabled=mode==='text';$('suggestImagePrompt').disabled=mode==='text';if(mode==='text')$('autoVisionPrompt').checked=false;else $('autoVisionPrompt').checked=true}
+function updateImageMode(){const mode=$('imageMode').value;$('imageDirection').style.display=(mode==='remake'||mode==='img2img')?'block':'none';document.querySelector('label[for=imageDirection]').style.display=(mode==='remake'||mode==='img2img')?'block':'none';$('strengthContainer').style.display=mode==='img2img'?'block':'none';$('autoVisionPrompt').disabled=mode==='text';$('suggestImagePrompt').disabled=mode==='text';if(mode==='text')$('autoVisionPrompt').checked=false;else $('autoVisionPrompt').checked=true;if(mode==='remake'){$('autoVisionPrompt').checked=true;$('autoVisionPrompt').disabled=true}}
 $('imageMode').onchange=updateImageMode;updateImageMode();
 $('imageAiForm').onsubmit=async e=>{
  e.preventDefault();const mode=$('imageMode').value;if(mode!=='text'&&!selectedReferenceId){$('imageAiMessage').textContent='Choose a reference image first.';return}
  $('aiThumbButton').disabled=true;$('imageAiMessage').textContent='Preparing thumbnail...';
- try{if(mode!=='text'&&$('autoVisionPrompt').checked){$('imageAiMessage').textContent='Ollama is analyzing the reference style and proposing a new scene...';await analyzeReference()}
+ try{if(mode!=='text'&&$('autoVisionPrompt').checked){$('imageAiMessage').textContent='Ollama is describing the reference and composing a fresh prompt...';await analyzeReference()}
  $('imageAiMessage').textContent='Generating '+(mode==='style'?'original scene from style':mode==='remake'?'new interpretation from Ollama prompt only':mode==='text'?'text-only artwork':'image-to-image variation')+' in Forge...';
  const j=await post('/thumbnail-ai/generate',{account_id:activeAccount,reference_id:selectedReferenceId,mode,prompt:$('imagePrompt').value,negative_prompt:$('imageNegative').value,title:$('aiThumbTitle').value,strength:Number($('imageStrength').value)});
  selectedThumbId=j.id;savedThumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('imageAiMessage').textContent='New AI thumbnail saved to library. Select it for your compilation.';await loadGallery();await refresh()}
