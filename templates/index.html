@@ -393,11 +393,12 @@ $('buildFinishedMp3').onclick=async()=>{
 const editorDefaults={
  cover:{zoom:1,x:50,y:50,fit:'cover',brightness:100,contrast:100,saturation:100,sharpness:100,blur:0,warmth:0,hue:0,vignette:0},
  particles:{x:50,y:50,size:100,opacity:85,speed:100,brightness:100,blur:0,color:'#ffffff'},
- ring:{x:50,y:50,size:28,opacity:90,color:'#ffffff'}
+ ring:{x:50,y:50,size:28,opacity:90,color:'#ffffff',sensitivity:300,glow:80,glow_blur:14},
+ export:{quality:'high'}
 };
 let editorSettings=JSON.parse(JSON.stringify(editorDefaults));
 function saveEditorSettings(){try{localStorage.setItem('music_video_editor_'+activeAccount,JSON.stringify(editorSettings))}catch(e){}}
-function restoreEditorSettings(){try{const value=JSON.parse(localStorage.getItem('music_video_editor_'+activeAccount)||'null');editorSettings=value&&typeof value==='object'?{cover:{...editorDefaults.cover,...(value.cover||{})},particles:{...editorDefaults.particles,...(value.particles||{})},ring:{...editorDefaults.ring,...(value.ring||{})}}:JSON.parse(JSON.stringify(editorDefaults));}catch(e){editorSettings=JSON.parse(JSON.stringify(editorDefaults))}renderEditorControls();updateEditorPreview()}
+function restoreEditorSettings(){try{const value=JSON.parse(localStorage.getItem('music_video_editor_'+activeAccount)||'null');editorSettings=value&&typeof value==='object'?{cover:{...editorDefaults.cover,...(value.cover||{})},particles:{...editorDefaults.particles,...(value.particles||{})},ring:{...editorDefaults.ring,...(value.ring||{})},export:{...editorDefaults.export,...(value.export||{})}}:JSON.parse(JSON.stringify(editorDefaults));}catch(e){editorSettings=JSON.parse(JSON.stringify(editorDefaults))}renderEditorControls();updateEditorPreview()}
 const editorFields={
  cover:[['zoom','Zoom',.5,3,.05],['x','Horizontal position',0,100,1],['y','Vertical position',0,100,1],
  ['fit','Image fit'],['brightness','Brightness',0,200,1],['contrast','Contrast',0,200,1],
@@ -407,7 +408,10 @@ const editorFields={
  ['opacity','Opacity',0,100,1],['speed','Animation speed',25,300,5],
  ['brightness','Brightness',0,200,1],['blur','Softness / blur',0,15,.5],['color','Particle color']],
  ring:[['x','Horizontal position',0,100,1],['y','Vertical position',0,100,1],
- ['size','Circle diameter',8,75,1],['opacity','Opacity',0,100,1],['color','Ring color']]
+ ['size','Circle diameter',8,75,1],['opacity','Opacity',0,100,1],['color','Ring color'],
+ ['sensitivity','Music sensitivity (%)',100,500,10],['glow','Glow intensity (%)',0,100,5],
+ ['glow_blur','Glow softness',0,35,1]],
+ export:[['quality','Render quality']]
 };
 function editorFieldsMarkup(layer,caption){
  return '<section class="editor-control-panel"><h3>'+caption+'</h3><div class="editor-sliders">'+
@@ -415,6 +419,7 @@ function editorFieldsMarkup(layer,caption){
   const [key,label,min,max,step]=field;
   const id='ed-'+layer+'-'+key,value=editorSettings[layer][key];
   if(key==='color')return '<div class="editor-slider-item"><label for="'+id+'">'+label+'</label><input type="color" id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'" value="'+value+'"></div>';
+  if(key==='quality')return '<div class="editor-slider-item"><label for="'+id+'">'+label+'</label><select id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'"><option value="balanced"'+(value==='balanced'?' selected':'')+'>Balanced · CRF 19</option><option value="high"'+(value==='high'?' selected':'')+'>High · CRF 17 (recommended)</option><option value="ultra"'+(value==='ultra'?' selected':'')+'>Ultra · CRF 15 (slower)</option></select></div>';
   if(key==='fit')return '<div class="editor-slider-item"><label for="'+id+'">'+label+'</label><select id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'"><option value="cover"'+(value==='cover'?' selected':'')+'>Fill / crop</option><option value="contain"'+(value==='contain'?' selected':'')+'>Fit whole image</option></select></div>';
   return '<div class="editor-slider-item"><label for="'+id+'">'+label+' <output id="'+id+'-value">'+value+'</output></label><input type="range" id="'+id+'" data-edlayer="'+layer+'" data-edkey="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"></div>';
  }).join('')+'</div></section>';
@@ -422,11 +427,12 @@ function editorFieldsMarkup(layer,caption){
 function renderEditorControls(){
  $('editorControls').innerHTML=editorFieldsMarkup('cover','Background: framing and photo adjustments')+
   editorFieldsMarkup('particles','Particles: appearance and motion')+
-  editorFieldsMarkup('ring','Circle: size, position and color');
+  editorFieldsMarkup('ring','Circle: music sensitivity, glow, size and position')+
+  editorFieldsMarkup('export','Final MP4 image quality');
  $('editorControls').querySelectorAll('[data-edlayer]').forEach(control=>{
   control.addEventListener('input',()=>{
    const layer=control.dataset.edlayer,key=control.dataset.edkey;
-   editorSettings[layer][key]=(key==='fit'||key==='color')?control.value:Number(control.value);
+   editorSettings[layer][key]=(key==='fit'||key==='color'||key==='quality')?control.value:Number(control.value);
    const out=$(control.id+'-value');if(out)out.textContent=control.value;
    updateEditorPreview();saveEditorSettings();
   });
@@ -464,6 +470,8 @@ function updateEditorPreview(){
  ring.style.width=rs.size+'%';ring.style.color=rs.color;
  ring.style.borderColor=rs.color;ring.style.opacity=rs.opacity/100;
  ring.style.borderWidth=Math.max(2,w/260)+'px';
+ ring.style.boxShadow='0 0 '+(rs.glow_blur*w/500)+'px '+(rs.glow*w/700)+'px '+rs.color+', inset 0 0 '+(rs.glow_blur*w/850)+'px '+rs.color;
+ ring.style.animationDuration=(2.4/(rs.sensitivity/100)).toFixed(2)+'s';
  const tint=cs.warmth/100;
  cover.style.filter+=' sepia('+(Math.abs(tint)*20)+'%)';
  if(cs.vignette){
