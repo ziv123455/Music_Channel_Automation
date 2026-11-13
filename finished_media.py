@@ -6,10 +6,12 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import tempfile
 import uuid
 
 from flask import Blueprint, jsonify, request, send_from_directory
 from channel_features import DB, THUMBS, valid_account
+from particle_effects import build_particle_frames, STYLES, LEVELS, FPS
 
 bp = Blueprint("finished_media", __name__, url_prefix="/api")
 DATA = DB.parent
@@ -44,6 +46,10 @@ def initialize():
             cn.execute("ALTER TABLE finished_videos ADD COLUMN cover_type TEXT NOT NULL DEFAULT 'thumbnail'")
         if "visualizer" not in columns:
             cn.execute("ALTER TABLE finished_videos ADD COLUMN visualizer INTEGER NOT NULL DEFAULT 0")
+        if "particles" not in columns:
+            cn.execute("ALTER TABLE finished_videos ADD COLUMN particles TEXT NOT NULL DEFAULT 'none'")
+        if "particle_intensity" not in columns:
+            cn.execute("ALTER TABLE finished_videos ADD COLUMN particle_intensity TEXT NOT NULL DEFAULT 'normal'")
 
 
 def current_account(data=None):
@@ -220,7 +226,7 @@ def get_video(item_id):
     return send_from_directory(OUTPUT_VIDEOS, item["filename"], as_attachment=True)
 
 
-def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer):
+def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer, particles, particle_intensity):
     output = OUTPUT_VIDEOS / (output_id + ".mp4")
     try:
         audio_path = MP3S / mp3["filename"]
