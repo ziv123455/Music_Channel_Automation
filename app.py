@@ -24,6 +24,14 @@ with db() as conn:
     conn.execute("CREATE TABLE IF NOT EXISTS songs (id TEXT PRIMARY KEY, title TEXT NOT NULL, filename TEXT NOT NULL, duration REAL NOT NULL, created TEXT NOT NULL)")
     conn.execute("CREATE TABLE IF NOT EXISTS compilations (id TEXT PRIMARY KEY, title TEXT NOT NULL, filename TEXT NOT NULL, chapters TEXT, created TEXT NOT NULL)")
 initialize_channels()
+with db() as conn:
+    conn.execute("""CREATE TABLE IF NOT EXISTS song_folders (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL,
+        name TEXT NOT NULL, created TEXT NOT NULL
+    )""")
+    existing_columns = {col["name"] for col in conn.execute("PRAGMA table_info(songs)")}
+    if "folder_id" not in existing_columns:
+        conn.execute("ALTER TABLE songs ADD COLUMN folder_id TEXT")
 app.register_blueprint(channel_blueprint)
 initialize_pipeline()
 app.register_blueprint(pipeline_blueprint)
@@ -46,6 +54,137 @@ def songs():
     if not valid_account(account_id): return jsonify(error="Invalid channel"), 404
     with db() as conn:
         return jsonify([dict(row) for row in conn.execute("SELECT * FROM songs WHERE account_id=? ORDER BY created DESC", (account_id,))])
+
+def _folder_name(value):
+    name = str(value or "").strip()
+    return name if 1 <= len(name) <= 80 else None
+
+
+@app.get("/api/song-folders")
+def list_song_folders():
+    account_id = request.args.get("account_id", "default")
+    if not valid_account(account_id):
+        return jsonify(error="Invalid channel"), 404
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id, name FROM song_folders WHERE account_id=? ORDER BY name COLLATE NOCASE, created",
+            (account_id,)
+        ).fetchall()
+    return jsonify([dict(row) for row in rows])
+
+
+@app.post("/api/song-folders")
+def create_song_folder():
+    data = request.get_json(silent=True) or {}
+    account_id = str(data.get("account_id") or "default")
+    if not valid_account(account_id):
+        return jsonify(error="Invalid channel"), 404
+    name = _folder_name(data.get("name"))
+    if not name:
+        return jsonify(error="Folder name must be 1 to 80 characters."), 400
+    folder_id = uuid.uuid4().hex
+    with db() as conn:
+        duplicate = conn.execute(
+            "SELECT id FROM song_folders WHERE account_id=? AND name=? COLLATE NOCASE",
+            (account_id, name)
+        ).fetchone()
+        if duplicate:
+            return jsonify(error="A folder with that name already exists."), 409
+        conn.execute(
+            "INSERT INTO song_folders (id, account_id, name, created) VALUES (?,?,?,?)",
+            (folder_id, account_id, name, datetime.now().isoformat())
+        )
+    return jsonify(id=folder_id, name=name), 201
+
+
+@app.patch("/api/song-folders/<folder_id>")
+def rename_song_folder(folder_id):
+    data = request.get_json(silent=True) or {}
+    account_id = str(data.get("account_id") or "default")
+    if not valid_account(account_id):
+        return jsonify(error="Invalid channel"), 404
+    name = _folder_name(data.get("name"))
+    if not name:
+        return jsonify(error="Folder name must be 1 to 80 characters."), 400
+    with db() as conn:
+        exists = conn.execute(
+            "SELECT id FROM song_folders WHERE id=? AND account_id=?", (folder_id, account_id)
+        ).fetchone()
+        if not exists:
+            return jsonify(error="Folder not found."), 404
+        duplicate = conn.execute(
+            "SELECT id FROM song_folders WHERE account_id=? AND name=? COLLATE NOCASE AND id<>?",
+            (account_id, name, folder_id)
+        ).fetchone()
+        if duplicate:
+            return jsonify(error="A folder with that name already exists."), 409
+        conn.execute(
+            "UPDATE song_folders SET name=? WHERE id=? AND account_id=?",
+            (name, folder_id, account_id)
+        )
+    return jsonify(id=folder_id, name=name)
+
+
+@app.delete("/api/song-folders/<folder_id>")
+def delete_song_folder(folder_id):
+    account_id = request.args.get("account_id", "default")
+    if not valid_account(account_id):
+        return jsonify(error="Invalid channel"), 404
+    with db() as conn:
+        exists = conn.execute(
+            "SELECT id FROM song_folders WHERE id=? AND account_id=?", (folder_id, account_id)
+        ).fetchone()
+        if not exists:
+            return jsonify(error="Folder not found."), 404
+        conn.execute(
+            "UPDATE songs SET folder_id=NULL WHERE account_id=? AND folder_id=?",
+            (account_id, folder_id)
+        )
+        conn.execute("DELETE FROM song_folders WHERE account_id=? AND id=?", (account_id, folder_id))
+    return jsonify(deleted=True)
+
+
+@app.patch("/api/songs/<song_id>")
+def edit_song_metadata(song_id):
+    data = request.get_json(silent=True) or {}
+    account_id = str(data.get("account_id") or "default")
+    if not valid_account(account_id):
+        return jsonify(error="Invalid channel"), 404
+    updates = []
+    args = []
+    if "title" in data:
+        title = str(data["title"] or "").strip()
+        if not 1 <= len(title) <= 150:
+            return jsonify(error="Song name must be 1 to 150 characters."), 400
+        updates.append("title=?")
+        args.append(title)
+    if "folder_id" in data:
+        folder_id = str(data["folder_id"] or "").strip() or None
+        if folder_id:
+            with db() as conn:
+                folder = conn.execute(
+                    "SELECT id FROM song_folders WHERE id=? AND account_id=?",
+                    (folder_id, account_id)
+                ).fetchone()
+            if not folder:
+                return jsonify(error="Folder does not belong to this channel."), 400
+        updates.append("folder_id=?")
+        args.append(folder_id)
+    if not updates:
+        return jsonify(error="No song changes supplied."), 400
+    with db() as conn:
+        result = conn.execute(
+            "UPDATE songs SET " + ", ".join(updates) + " WHERE id=? AND account_id=?",
+            args + [song_id, account_id]
+        )
+        if result.rowcount != 1:
+            return jsonify(error="Song not found in this channel."), 404
+        song = conn.execute(
+            "SELECT id, title, folder_id FROM songs WHERE id=? AND account_id=?",
+            (song_id, account_id)
+        ).fetchone()
+    return jsonify(dict(song))
+
 
 @app.post("/api/upload")
 def upload():
