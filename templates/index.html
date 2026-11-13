@@ -33,6 +33,22 @@ input[type=text],input[type=email],input[type=number],select{width:100%}input[ty
 .song-folder .row button{padding:7px 9px;font-size:12px}
 .song-folder .track.dragging{opacity:.4}
 .folder-empty{border:1px dashed #454963;border-radius:8px;padding:12px;color:#959bb8;font-size:12px}
+.particle-examples{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0}
+.particle-example{border:2px solid #444860;background:#1a1c2c;border-radius:12px;padding:7px;cursor:pointer;text-align:left}
+.particle-example:hover{border-color:#9870e4}
+.particle-example.selected{border-color:#b48cff;background:#29233e}
+.particle-example strong{display:block;padding:7px 5px 3px}
+.particle-demo{height:102px;position:relative;overflow:hidden;border-radius:8px;background:radial-gradient(circle at 50% 55%,#393047,#151621 75%)}
+.particle-dot{position:absolute;border-radius:100%;width:var(--ps);height:var(--ps);left:var(--px);top:var(--py);background:var(--pc);opacity:var(--po);box-shadow:0 0 9px 2px var(--pg);animation:particle-drift var(--pt) ease-in-out infinite alternate;animation-delay:var(--pd);pointer-events:none}
+.particle-demo[data-kind="snow"] .particle-dot,.particle-cover-dots[data-kind="snow"] .particle-dot{animation-name:particle-fall;animation-timing-function:linear}
+.particle-demo[data-kind="embers"] .particle-dot,.particle-cover-dots[data-kind="embers"] .particle-dot{animation-name:particle-rise}
+.particle-demo[data-kind="fireflies"] .particle-dot,.particle-cover-dots[data-kind="fireflies"] .particle-dot{animation-name:particle-glow}
+.particle-cover-dots{position:absolute;inset:0;overflow:hidden;pointer-events:none;border-radius:10px}
+@keyframes particle-drift{from{transform:translate(0,0);opacity:var(--po)}to{transform:translate(var(--dx),var(--dy));opacity:calc(var(--po)*.5)}}
+@keyframes particle-fall{from{transform:translate(0,-55px)}to{transform:translate(var(--dx),90px)}}
+@keyframes particle-rise{from{transform:translate(0,70px)}to{transform:translate(var(--dx),-85px)}}
+@keyframes particle-glow{from{transform:translate(0,0);opacity:.15}to{transform:translate(var(--dx),var(--dy));opacity:var(--po)}}
+@media(prefers-reduced-motion:reduce){.particle-dot{animation:none}}
 .mix-order{display:flex;flex-direction:column;gap:7px;margin:12px 0}
 .mix-order-item{display:flex;align-items:center;gap:10px;padding:9px;border:1px solid #494b68;border-radius:9px;background:#202337}
 .mix-order-item>span{flex:1;min-width:0;overflow-wrap:anywhere}
@@ -112,7 +128,19 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <div><label for="editorVideoTitle">Video title</label><input id="editorVideoTitle" type="text" maxlength="120" value="My Music Video"></div>
 </div>
 <label><input type="checkbox" id="editorCircularVisualizer"> Add music-reactive circular visualizer (pulsing white ring over the cover)</label>
-<div id="editorCoverPreview" style="margin:12px 0;display:none"><img id="editorCoverImage" class="thumb" alt="Selected video background cover"></div>
+<h3>Animated background particles</h3>
+<p class="muted">Choose an effect to watch a moving example. Particle overlays flow over the entire cover and repeat seamlessly throughout the exported video.</p>
+<div id="particleExamples" class="particle-examples">
+<button type="button" class="particle-example selected" data-particle="none"><div class="particle-demo" data-kind="none"></div><strong>None</strong><span class="muted">Still background</span></button>
+<button type="button" class="particle-example" data-particle="dust"><div class="particle-demo" data-kind="dust"></div><strong>Golden dust</strong><span class="muted">Soft drifting motes</span></button>
+<button type="button" class="particle-example" data-particle="fireflies"><div class="particle-demo" data-kind="fireflies"></div><strong>Fireflies</strong><span class="muted">Glowing floating lights</span></button>
+<button type="button" class="particle-example" data-particle="snow"><div class="particle-demo" data-kind="snow"></div><strong>Soft snow</strong><span class="muted">Falling white flakes</span></button>
+<button type="button" class="particle-example" data-particle="embers"><div class="particle-demo" data-kind="embers"></div><strong>Embers</strong><span class="muted">Warm rising sparks</span></button>
+</div>
+<input type="hidden" id="editorParticles" value="none">
+<label for="editorParticleIntensity">Particle density</label>
+<select id="editorParticleIntensity"><option value="subtle">Subtle</option><option value="normal" selected>Normal</option><option value="strong">Strong</option></select>
+<div id="editorCoverPreview" style="margin:12px 0;display:none;position:relative;max-width:520px"><img id="editorCoverImage" class="thumb" alt="Selected video background cover"><div id="editorCoverParticles" class="particle-cover-dots" data-kind="none"></div></div>
 <div id="editorPreview" class="muted"></div>
 <button type="submit" id="renderFinishedVideo">Render Video</button><span id="videoCreateMessage" class="muted"></span>
 </form>
@@ -334,6 +362,33 @@ $('buildFinishedMp3').onclick=async()=>{
  catch(e){$('mp3CreateMessage').textContent=e.message}
  finally{$('buildFinishedMp3').disabled=false}
 };
+const particlePalettes={dust:['#f3dba6','rgba(255,211,117,.45)'],fireflies:['#d4ff8d','rgba(151,255,88,.65)'],snow:['#ebf4ff','rgba(226,240,255,.5)'],embers:['#ff9959','rgba(255,98,27,.55)']};
+function drawParticleDots(container,kind,count){
+ container.dataset.kind=kind;
+ if(kind==='none'){container.innerHTML='';return}
+ const shades=particlePalettes[kind]||particlePalettes.dust;
+ container.innerHTML=Array.from({length:count},(_,i)=>{
+  const n=(i*37+11)%101,m=(i*61+27)%97;
+  const size=(kind==='fireflies'?3:1.5)+(i%5)*.7;
+  const dx=((i*17)%45-22)+'px',dy=((i*29)%50-25)+'px';
+  const props=['--px:'+n+'%','--py:'+m+'%','--ps:'+size+'px','--pc:'+shades[0],'--pg:'+shades[1],
+   '--po:'+(0.35+(i%6)*.1).toFixed(2),'--pt:'+(2.6+(i%7)*.8)+'s','--pd:'+(i%11*-0.6)+'s',
+   '--dx:'+dx,'--dy:'+dy].join(';');
+  return '<span class="particle-dot" style="'+props+'"></span>';
+ }).join('');
+}
+function updateParticlePreview(){
+ const kind=$('editorParticles').value,intensity=$('editorParticleIntensity').value;
+ document.querySelectorAll('.particle-example').forEach(b=>b.classList.toggle('selected',b.dataset.particle===kind));
+ const count=Math.round((intensity==='subtle'?16:intensity==='strong'?46:28));
+ drawParticleDots($('editorCoverParticles'),kind,count);
+}
+document.querySelectorAll('.particle-example').forEach(b=>{
+ drawParticleDots(b.querySelector('.particle-demo'),b.dataset.particle,15);
+ b.onclick=()=>{$('editorParticles').value=b.dataset.particle;updateParticlePreview()};
+});
+$('editorParticleIntensity').onchange=updateParticlePreview;
+updateParticlePreview();
 async function loadFinishedMedia(){
  const account=activeAccount;
  try{
@@ -365,6 +420,7 @@ async function loadFinishedMedia(){
       '/api/reference/'+encodeURIComponent(item.filename)+'?account_id='+encodeURIComponent(account);
   };
   $('editorThumbnail').onchange();
+  updateParticlePreview();
   $('finishedVideoLibrary').innerHTML=tasks.filter(j=>j.kind==='video'&&j.status!=='done').map(j=>'<div class="status">'+esc(j.status)+': '+esc(j.progress)+'</div>').join('')+(vids.length?vids.map(v=>'<div class="status"><strong>'+esc(v.title)+'</strong> · '+dur(v.duration)+' <a href="/api/finished-videos/'+encodeURIComponent(v.id)+'/video?account_id='+encodeURIComponent(account)+'">Download MP4</a></div>').join(''):'No finished videos yet.');
   $('editorPreview').textContent='Choose a finished MP3 and set the video length. The MP3 loops continuously to fill the video.';
  }catch(e){$('finishedMp3Library').textContent=e.message;$('finishedVideoLibrary').textContent=e.message}
@@ -379,7 +435,7 @@ $('finishedVideoForm').onsubmit=async e=>{
  try{
   const cover=$('editorThumbnail').value.split(':');
   if(cover.length!==2||!['thumbnail','reference'].includes(cover[0]))throw Error('Select a background cover.');
-  await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,cover_type:cover[0],thumbnail_id:cover[1],visualizer:$('editorCircularVisualizer').checked,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
+  await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,cover_type:cover[0],thumbnail_id:cover[1],visualizer:$('editorCircularVisualizer').checked,particles:$('editorParticles').value,particle_intensity:$('editorParticleIntensity').value,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
  catch(e){$('videoCreateMessage').textContent=e.message}
  finally{$('renderFinishedVideo').disabled=false}
 };
