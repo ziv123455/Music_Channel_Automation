@@ -24,7 +24,7 @@ PALETTES = {
 }
 
 
-def build_particle_frames(folder, style="dust", intensity="normal"):
+def build_particle_frames(folder, style="dust", intensity="normal", color=None, brightness=100):
     """Return a frame_%03d.png pattern for a seamless six-second alpha loop."""
     if style not in STYLES or style == "none":
         raise ValueError("Select a supported particle effect.")
@@ -49,6 +49,9 @@ def build_particle_frames(folder, style="dust", intensity="normal"):
         ))
 
     rgb = PALETTES[style]
+    if color:
+        rgb = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+    rgb = tuple(max(0, min(255, int(channel * brightness / 100))) for channel in rgb)
     for frame_index in range(FRAME_COUNT):
         theta = 2 * math.pi * frame_index / FRAME_COUNT
         image = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
