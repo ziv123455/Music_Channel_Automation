@@ -284,7 +284,7 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-loop", "1", "-framerate", "24", "-i", str(prepared_image),
                 "-stream_loop", "-1", "-i", str(audio_path)]
-        background = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
+        background = ("scale=1920:1080:flags=lanczos:force_original_aspect_ratio=decrease,"
                       "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p")
         filters = []
         video_label = "[bg]"
@@ -305,7 +305,7 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
                 px = int(1920 * fx["x"] / 100 - pw / 2)
                 py = int(1080 * fx["y"] / 100 - ph / 2)
                 filters.append("[2:v]fps=24,scale=" + str(pw) + ":" + str(ph) +
-                               ":flags=bilinear,format=rgba,colorchannelmixer=aa=" +
+                               ":flags=lanczos,format=rgba,colorchannelmixer=aa=" +
                                str(p_opacity) + (",gblur=sigma=" + str(fx["blur"])
                                if fx["blur"] else "") + "[fx]")
                 filters.append(video_label + "[fx]overlay=x=" + str(px) + ":y=" + str(py) +
@@ -356,8 +356,12 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
         job_change(job_id, progress="Rendering video with " +
                    ("particles and " if particles != "none" else "") +
                    ("audio spectrum ring" if visualizer else "background image"))
+        quality = editor_settings["export"]["quality"]
+        preset, crf = {"balanced": ("medium", "19"),
+                       "high": ("medium", "17"),
+                       "ultra": ("slow", "15")}[quality]
         args.extend(["-t", f"{duration:.3f}",
-                     "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
+                     "-c:v", "libx264", "-preset", preset, "-crf", crf,
                      "-r", "24", "-pix_fmt", "yuv420p",
                      "-c:a", "aac", "-b:a", "192k",
                      "-movflags", "+faststart", str(output)])
