@@ -16,7 +16,24 @@ input[type=text],input[type=email],input[type=number],select{width:100%}input[ty
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:13px}
 .status{border:1px solid #3a3e59;padding:13px;border-radius:10px;margin:10px 0}.good{color:#85e1ac}.warning{color:#e9c578}.error{color:#ff9c9c}
 .track{padding:13px 0;border-bottom:1px solid #414159;display:flex;align-items:center;gap:12px}.track strong{display:block}
-.track audio{width:260px;max-width:100%}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+.track audio{width:260px;max-width:100%}
+.folder-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:15px 0}
+.folder-toolbar input{max-width:270px}
+.song-folders{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:15px;align-items:start}
+.song-folder{border:1px solid #474b68;background:#171a2d;border-radius:12px;padding:12px;min-height:120px}
+.song-folder.drag-over{outline:3px solid #a884ff;background:#282448}
+.song-folder-header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}
+.song-folder-header h3{margin:0;overflow-wrap:anywhere}
+.song-folder .track{padding:10px 0;flex-wrap:wrap}
+.song-folder .track audio{width:100%}
+.song-folder .track .track-details{flex:1;min-width:160px}
+.song-drag-handle{cursor:grab;user-select:none;touch-action:none;border:1px dashed #717397;background:#292c46;border-radius:8px;padding:8px;font-size:17px;align-self:flex-start}
+.song-drag-handle:active{cursor:grabbing}
+.song-folder .row{gap:6px;margin-top:8px}
+.song-folder .row button{padding:7px 9px;font-size:12px}
+.song-folder .track.dragging{opacity:.4}
+.folder-empty{border:1px dashed #454963;border-radius:8px;padding:12px;color:#959bb8;font-size:12px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-width:520px;aspect-ratio:16/9;object-fit:cover;border-radius:10px;border:1px solid #454762}
 .pill{display:inline-block;background:#30344d;border-radius:10px;padding:5px 9px;font-size:12px}
 @media(max-width:650px){.track{flex-wrap:wrap}.track audio{width:100%}header{align-items:flex-start;flex-direction:column}}
@@ -62,7 +79,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 
 <div class="tabpane" id="pane-library">
 <section class="panel"><h2>Import songs for this channel</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Optional song title"><button>Import audio</button></form><p id="uploadStatus" class="muted"></p></section>
-<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks for compilations, use Create Similar to make new songs inspired by a saved track prompt, or delete unwanted songs. Active compilation drafts are protected.</p><div id="songs">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div></section>
+<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks for compilations, use Create Similar to make new songs inspired by a saved track prompt, or delete unwanted songs. Active compilation drafts are protected.</p><div class="folder-toolbar"><input id="newFolderName" type="text" maxlength="80" placeholder="New folder name"><button type="button" id="createSongFolder">+ Create Folder</button></div><div id="songs" class="song-folders">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div></section>
 </div>
 <div class="tabpane" id="pane-mixes">
 <section class="panel"><h2>Step 2 — Build a compilation</h2>
@@ -180,17 +197,28 @@ async function refresh(){
  if(!current())return;
  const accountAtStart=activeAccount;
  const lib=await read('/songs?account_id='+encodeURIComponent(accountAtStart));if(accountAtStart!==activeAccount)return;
- $('songs').innerHTML=lib.length?lib.map(s=>'<div class="track"><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div style="flex:1"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'<div class="muted small">Imported track: no saved generation prompt</div>')+'<div class="row"><button type="button" class="similarTrack tab" data-id="'+esc(s.id)+'" '+(s.prompt?'':'disabled')+'>Create Similar</button><button type="button" class="deleteTrack tab" data-id="'+esc(s.id)+'">Delete</button></div></div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(activeAccount)+'"></audio></div>').join(''):'No songs for this channel yet.';
+ const folders=await read('/song-folders?account_id='+encodeURIComponent(accountAtStart));if(accountAtStart!==activeAccount)return;
+ const groups=[{id:'',name:'Unfiled Songs'},...folders];
+ const folderCard=group=>{
+  const tracks=lib.filter(s=>(s.folder_id||'')===group.id);
+  const header=group.id?'<button type="button" class="renameFolder tab" data-id="'+esc(group.id)+'">Rename</button><button type="button" class="removeFolder tab" data-id="'+esc(group.id)+'">Delete folder</button>':'';
+  return '<section class="song-folder" data-folder-id="'+esc(group.id)+'"><div class="song-folder-header"><h3>📁 '+esc(group.name)+' <span class="pill">'+tracks.length+'</span></h3><div class="row">'+header+'</div></div><div class="folder-content">'+(tracks.length?tracks.map(s=>'<div class="track" data-song-id="'+esc(s.id)+'"><span class="song-drag-handle" draggable="true" data-id="'+esc(s.id)+'" title="Drag song to another folder" aria-label="Drag song">⠿</span><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div class="track-details"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'<div class="muted small">No saved AI prompt</div>')+'<div class="row"><button type="button" class="renameTrack tab" data-id="'+esc(s.id)+'">Rename</button><button type="button" class="similarTrack tab" data-id="'+esc(s.id)+'" '+(s.prompt?'':'disabled')+'>Create Similar</button><button type="button" class="deleteTrack tab" data-id="'+esc(s.id)+'">Delete</button></div></div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(accountAtStart)+'"></audio></div>').join(''):'<div class="folder-empty">Drop songs here</div>')+'</div></section>';
+ };
+ $('songs').innerHTML=groups.map(folderCard).join('');
  document.querySelectorAll('.trackPick').forEach(i=>i.onchange=updateSelection);updateSelection();
  document.querySelectorAll('.similarTrack').forEach(b=>b.onclick=()=>{
    const s=lib.find(item=>item.id===b.dataset.id);if(!s||!s.prompt)return;
    similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
    $('musicPrompt').value='Create an original new song with the feel of '+s.title+', with fresh musical ideas.';
-   $('autoPrompts').checked=true;
-   $('similarSource').style.display='block';
+   $('autoPrompts').checked=true;$('similarSource').style.display='block';
    $('similarSource').innerHTML='Using saved prompt from: <strong>'+esc(s.title)+'</strong>. <button type="button" id="clearSimilar" class="tab">Clear reference</button>';
    $('clearSimilar').onclick=()=>{similarSongId='';$('similarSource').style.display='none'};
    document.querySelector('.tab[data-tab="generate"]').click();
+ });
+ document.querySelectorAll('.renameTrack').forEach(b=>b.onclick=async()=>{
+   const s=lib.find(item=>item.id===b.dataset.id);if(!s)return;
+   const name=prompt('Rename song:',s.title);if(name===null||name.trim()===s.title)return;
+   try{await patchSong(s.id,{title:name.trim()},accountAtStart);$('libraryMessage').textContent='Renamed song';await refresh()}catch(e){$('libraryMessage').textContent=e.message}
  });
  document.querySelectorAll('.deleteTrack').forEach(b=>b.onclick=async()=>{
    const s=lib.find(item=>item.id===b.dataset.id);if(!s)return;
@@ -204,6 +232,27 @@ async function refresh(){
      $('libraryMessage').textContent='Deleted '+s.title;await refresh();
    }catch(err){$('libraryMessage').textContent=err.message;b.disabled=false}
  });
+ document.querySelectorAll('.renameFolder').forEach(b=>b.onclick=async()=>{
+   const f=folders.find(item=>item.id===b.dataset.id);if(!f)return;
+   const name=prompt('Rename folder:',f.name);if(name===null||name.trim()===f.name)return;
+   try{await folderRequest('/song-folders/'+encodeURIComponent(f.id),'PATCH',{account_id:accountAtStart,name:name.trim()});$('libraryMessage').textContent='Folder renamed';await refresh()}catch(e){$('libraryMessage').textContent=e.message}
+ });
+ document.querySelectorAll('.removeFolder').forEach(b=>b.onclick=async()=>{
+   const f=folders.find(item=>item.id===b.dataset.id);if(!f)return;
+   if(!confirm('Delete folder '+f.name+'? Its songs will move to Unfiled; no audio will be deleted.'))return;
+   try{await folderRequest('/song-folders/'+encodeURIComponent(f.id),'DELETE',null,accountAtStart);$('libraryMessage').textContent='Folder deleted; songs moved to Unfiled';await refresh()}catch(e){$('libraryMessage').textContent=e.message}
+ });
+ document.querySelectorAll('.song-drag-handle').forEach(handle=>{
+   handle.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',handle.dataset.id);e.dataTransfer.effectAllowed='move';handle.closest('.track').classList.add('dragging')});
+   handle.addEventListener('dragend',()=>{handle.closest('.track').classList.remove('dragging');document.querySelectorAll('.song-folder').forEach(f=>f.classList.remove('drag-over'))});
+ });
+ document.querySelectorAll('.song-folder').forEach(folder=>{
+   folder.addEventListener('dragover',e=>{if(!e.dataTransfer.types.includes('text/plain'))return;e.preventDefault();e.dataTransfer.dropEffect='move';folder.classList.add('drag-over')});
+   folder.addEventListener('dragleave',e=>{if(!folder.contains(e.relatedTarget))folder.classList.remove('drag-over')});
+   folder.addEventListener('drop',async e=>{e.preventDefault();folder.classList.remove('drag-over');const id=e.dataTransfer.getData('text/plain');const target=folder.dataset.folderId;const s=lib.find(item=>item.id===id);if(!s||(s.folder_id||'')===target)return;
+     try{await patchSong(id,{folder_id:target||null},accountAtStart);$('libraryMessage').textContent='Moved '+s.title+' into '+(groups.find(g=>g.id===target)?.name||'Unfiled Songs');await refresh()}catch(err){$('libraryMessage').textContent=err.message}
+   });
+ });
  const vids=await read('/compilations?account_id='+encodeURIComponent(activeAccount));
  const gallery=await read('/thumbnails/library?account_id='+encodeURIComponent(activeAccount));
  const thumbs=gallery.map(t=>'<option value="'+esc(t.id)+'" '+(t.id===selectedThumbId?'selected':'')+'>'+esc(t.title)+' ('+esc(t.method)+')</option>').join('');
@@ -212,6 +261,18 @@ async function refresh(){
  '<div class="row"><select class="mixThumb" data-id="'+esc(v.id)+'"><option value="">Select thumbnail</option>'+thumbs+'</select><button class="renderDraft" data-id="'+esc(v.id)+'">Render video with selected thumbnail</button></div>')+'</div>').join(''):'No compilations yet. Save a draft above.';
  document.querySelectorAll('.renderDraft').forEach(b=>b.onclick=()=>renderDraft(b.dataset.id));
 }
+async function folderRequest(path,method,data,accountId){
+ const url='/api'+path+(method==='DELETE'?'?account_id='+encodeURIComponent(accountId):'');
+ const res=await fetch(url,{method,headers:{'Content-Type':'application/json'},...(data?{body:JSON.stringify(data)}:{})});
+ const result=await res.json();if(!res.ok)throw Error(result.error||'Folder operation failed');return result;
+}
+async function patchSong(id,changes,accountId){
+ return folderRequest('/songs/'+encodeURIComponent(id),'PATCH',{account_id:accountId,...changes});
+}
+$('createSongFolder').onclick=async()=>{
+ const name=$('newFolderName').value.trim();if(!name){$('libraryMessage').textContent='Enter a folder name first';return}
+ try{await folderRequest('/song-folders','POST',{account_id:activeAccount,name});$('newFolderName').value='';$('libraryMessage').textContent='Folder created';await refresh()}catch(e){$('libraryMessage').textContent=e.message}
+};
 function updateSelection(){selectedTrackIds=[...document.querySelectorAll('.trackPick:checked')].map(x=>x.value);$('selectionStats').textContent=selectedTrackIds.length+' tracks selected for manual compilation';}
 async function renderDraft(id){
  const dropdown=[...document.querySelectorAll('.mixThumb')].find(x=>x.dataset.id===id);
