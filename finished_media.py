@@ -228,38 +228,54 @@ def get_video(item_id):
 
 def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cover_type, visualizer, particles, particle_intensity):
     output = OUTPUT_VIDEOS / (output_id + ".mp4")
+    particle_dir = None
     try:
         audio_path = MP3S / mp3["filename"]
         image_path = (THUMBS if cover_type == "thumbnail" else DATA / "references") / thumb["filename"]
         if not audio_path.is_file() or not image_path.is_file():
             raise FileNotFoundError("MP3 or thumbnail file is missing.")
-        job_change(job_id, status="running",
-                   progress="Rendering thumbnail-backed video with repeating MP3 audio")
+        job_change(job_id, status="running", progress="Preparing music video effects")
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-loop", "1", "-framerate", "24", "-i", str(image_path),
                 "-stream_loop", "-1", "-i", str(audio_path)]
         background = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
                       "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p")
-        if visualizer:
-            # A sound-reactive ring, built entirely in FFmpeg (no extra installs).
-            radial = (
-                "if(between(hypot(X-256\,Y-256)\,138\,142)\,210\,"
-                "if(between(hypot(X-256\,Y-256)\,142\,205)\,"
-                "lum(512*(atan2(Y-256\,X-256)+PI)/(2*PI)\,"
-                "512-(hypot(X-256\,Y-256)-142)*8)\,0))"
-            )
-            graph = (
-                "[0:v]" + background + "[bg];"
-                "[1:a]asplit=2[aout][viz];"
-                "[viz]showfreqs=s=512x512:mode=bar:ascale=lin:fscale=log:"
-                "colors=white:rate=24,format=gray,geq=lum=" + radial +
-                ",format=rgba,colorkey=0x000000:0.06:0.1[ring];"
-                "[bg][ring]overlay=(main_w-overlay_w)/2:"
-                "(main_h-overlay_h)/2:shortest=1[v]"
-            )
-            args.extend(["-filter_complex", graph, "-map", "[v]", "-map", "[aout]"])
+        filters = []
+        video_label = "[bg]"
+        if particles != "none":
+            particle_dir = tempfile.mkdtemp(prefix="music_video_particles_")
+            job_change(job_id, progress="Drawing looping " + particles + " particle animation")
+            pattern = build_particle_frames(particle_dir, particles, particle_intensity)
+            args.extend(["-stream_loop", "-1", "-framerate", str(FPS), "-i", pattern])
+        if visualizer or particles != "none":
+            filters.append("[0:v]" + background + "[bg]")
+            if particles != "none":
+                filters.append("[2:v]fps=24,scale=1920:1080:flags=bilinear,format=rgba[fx]")
+                filters.append(video_label + "[fx]overlay=x=0:y=0:format=auto:shortest=1[scene]")
+                video_label = "[scene]"
+            if visualizer:
+                radial = (
+                    "if(between(hypot(X-256\\,Y-256)\\,138\\,142)\\,210\\,"
+                    "if(between(hypot(X-256\\,Y-256)\\,142\\,205)\\,"
+                    "lum(512*(atan2(Y-256\\,X-256)+PI)/(2*PI)\\,"
+                    "512-(hypot(X-256\\,Y-256)-142)*8)\\,0))"
+                )
+                filters.append("[1:a]asplit=2[aout][viz]")
+                filters.append(
+                    "[viz]showfreqs=s=512x512:mode=bar:ascale=lin:fscale=log:"
+                    "colors=white:rate=24,format=gray,geq=lum=" + radial +
+                    ",format=rgba,colorkey=0x000000:0.06:0.1[ring]"
+                )
+                filters.append(video_label + "[ring]overlay=(main_w-overlay_w)/2:"
+                               "(main_h-overlay_h)/2:shortest=1[v]")
+                video_label = "[v]"
+            args.extend(["-filter_complex", ";".join(filters),
+                         "-map", video_label, "-map", "[aout]" if visualizer else "1:a:0"])
         else:
             args.extend(["-vf", background, "-map", "0:v:0", "-map", "1:a:0"])
+        job_change(job_id, progress="Rendering video with " +
+                   ("particles and " if particles != "none" else "") +
+                   ("audio spectrum ring" if visualizer else "background image"))
         args.extend(["-t", f"{duration:.3f}",
                      "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
                      "-r", "24", "-pix_fmt", "yuv420p",
