@@ -106,11 +106,13 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <form id="finishedVideoForm">
 <div class="grid">
 <div><label for="editorMp3">Finished MP3</label><select id="editorMp3" required></select></div>
-<div><label for="editorThumbnail">Thumbnail</label><select id="editorThumbnail" required></select></div>
+<div><label for="editorThumbnail">Background cover (generated thumbnail or uploaded reference)</label><select id="editorThumbnail" required></select></div>
 <div><label for="editorHours">Video duration (hours)</label><input id="editorHours" type="number" min="0" max="24" value="1"></div>
 <div><label for="editorMinutes">Additional minutes</label><input id="editorMinutes" type="number" min="0" max="59" value="0"></div>
 <div><label for="editorVideoTitle">Video title</label><input id="editorVideoTitle" type="text" maxlength="120" value="My Music Video"></div>
 </div>
+<label><input type="checkbox" id="editorCircularVisualizer"> Add music-reactive circular visualizer (pulsing white ring over the cover)</label>
+<div id="editorCoverPreview" style="margin:12px 0;display:none"><img id="editorCoverImage" class="thumb" alt="Selected video background cover"></div>
 <div id="editorPreview" class="muted"></div>
 <button type="submit" id="renderFinishedVideo">Render Video</button><span id="videoCreateMessage" class="muted"></span>
 </form>
@@ -335,10 +337,11 @@ $('buildFinishedMp3').onclick=async()=>{
 async function loadFinishedMedia(){
  const account=activeAccount;
  try{
-  const [mp3s,vids,thumbs,tasks]=await Promise.all([
+  const [mp3s,vids,thumbs,refs,tasks]=await Promise.all([
     read('/finished-mp3s?account_id='+encodeURIComponent(account)),
     read('/finished-videos?account_id='+encodeURIComponent(account)),
     read('/thumbnails/library?account_id='+encodeURIComponent(account)),
+    read('/references?account_id='+encodeURIComponent(account)),
     read('/finished-media/jobs?account_id='+encodeURIComponent(account))
   ]);
   if(account!==activeAccount)return;
@@ -349,9 +352,19 @@ async function loadFinishedMedia(){
   $('finishedMp3Library').innerHTML=taskHtml+recentErrors+(mp3s.length?mp3s.map(m=>'<div class="status"><strong>'+esc(m.title)+'</strong> <span class="pill">'+dur(m.duration)+'</span><audio controls preload="none" style="display:block;width:100%;margin:10px 0" src="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'"></audio><a href="/api/finished-mp3s/'+encodeURIComponent(m.id)+'/audio?account_id='+encodeURIComponent(account)+'&download=1">Download MP3</a></div>').join(''):'No finished MP3s yet.');
   const oldMp3=$('editorMp3').value,oldThumb=$('editorThumbnail').value;
   $('editorMp3').innerHTML='<option value="">Select a finished MP3</option>'+mp3s.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.title)+' ('+dur(m.duration)+')</option>').join('');
-  $('editorThumbnail').innerHTML='<option value="">Select a thumbnail</option>'+thumbs.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.title)+'</option>').join('');
+  $('editorThumbnail').innerHTML='<option value="">Select a background cover</option>'+
+    thumbs.map(t=>'<option value="thumbnail:'+esc(t.id)+'">Generated: '+esc(t.title)+'</option>').join('')+
+    refs.map(t=>'<option value="reference:'+esc(t.id)+'">Reference: '+esc(t.title)+'</option>').join('');
   if(mp3s.some(m=>m.id===oldMp3))$('editorMp3').value=oldMp3;
-  if(thumbs.some(t=>t.id===oldThumb))$('editorThumbnail').value=oldThumb;
+  if([...thumbs.map(t=>'thumbnail:'+t.id),...refs.map(t=>'reference:'+t.id)].includes(oldThumb))$('editorThumbnail').value=oldThumb;
+  $('editorThumbnail').onchange=()=>{
+    const [kind,id]=$('editorThumbnail').value.split(':');
+    const item=(kind==='thumbnail'?thumbs:refs).find(t=>t.id===id);
+    $('editorCoverPreview').style.display=item?'block':'none';
+    if(item)$('editorCoverImage').src=kind==='thumbnail'?'/api/thumbnail/'+encodeURIComponent(item.filename):
+      '/api/reference/'+encodeURIComponent(item.filename)+'?account_id='+encodeURIComponent(account);
+  };
+  $('editorThumbnail').onchange();
   $('finishedVideoLibrary').innerHTML=tasks.filter(j=>j.kind==='video'&&j.status!=='done').map(j=>'<div class="status">'+esc(j.status)+': '+esc(j.progress)+'</div>').join('')+(vids.length?vids.map(v=>'<div class="status"><strong>'+esc(v.title)+'</strong> · '+dur(v.duration)+' <a href="/api/finished-videos/'+encodeURIComponent(v.id)+'/video?account_id='+encodeURIComponent(account)+'">Download MP4</a></div>').join(''):'No finished videos yet.');
   $('editorPreview').textContent='Choose a finished MP3 and set the video length. The MP3 loops continuously to fill the video.';
  }catch(e){$('finishedMp3Library').textContent=e.message;$('finishedVideoLibrary').textContent=e.message}
@@ -363,7 +376,10 @@ $('finishedVideoForm').onsubmit=async e=>{
  if(!item){$('videoCreateMessage').textContent='Select a finished MP3.';return}
  if(seconds<=item.duration){$('videoCreateMessage').textContent='Video must be longer than the selected MP3 ('+dur(item.duration)+').';return}
  $('renderFinishedVideo').disabled=true;$('videoCreateMessage').textContent='Starting video render...';
- try{await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,thumbnail_id:$('editorThumbnail').value,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
+ try{
+  const cover=$('editorThumbnail').value.split(':');
+  if(cover.length!==2||!['thumbnail','reference'].includes(cover[0]))throw Error('Select a background cover.');
+  await post('/finished-videos',{account_id:activeAccount,mp3_id:item.id,cover_type:cover[0],thumbnail_id:cover[1],visualizer:$('editorCircularVisualizer').checked,duration_seconds:seconds,title:$('editorVideoTitle').value});$('videoCreateMessage').textContent='Rendering started. Finished video will appear below.';await loadFinishedMedia()}
  catch(e){$('videoCreateMessage').textContent=e.message}
  finally{$('renderFinishedVideo').disabled=false}
 };
