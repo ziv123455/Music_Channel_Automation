@@ -52,6 +52,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <label><input id="autoCompilation" type="checkbox"> Create a compilation draft from generated songs (choose artwork later)</label>
 </div>
 <label for="compilationTitle">Compilation title</label><input id="compilationTitle" maxlength="100" value="1 Hour of Peaceful Classical Music">
+<div id="similarSource" class="status muted" style="display:none"></div>
 <div class="muted" style="margin:9px 0">Songs are stored in the library first. Optionally make a draft tracklist, then choose a thumbnail and render it later.</div>
 <div class="row"><button id="generateBtn" type="submit">Generate Song Batch</button><button type="button" id="checkConnections" class="tab">Check AI connections</button><button type="button" id="previewPrompt" class="tab">Preview one AI prompt</button></div>
 <div id="promptPreview" class="status muted" style="display:none"></div>
@@ -61,7 +62,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 
 <div class="tabpane" id="pane-library">
 <section class="panel"><h2>Import songs for this channel</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Optional song title"><button>Import audio</button></form><p id="uploadStatus" class="muted"></p></section>
-<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks in playback order. Song prompts are saved with each generated song.</p><div id="songs">Loading...</div><div id="selectionStats" class="muted"></div></section>
+<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks for compilations, use Create Similar to make new songs inspired by a saved track prompt, or delete unwanted songs. Active compilation drafts are protected.</p><div id="songs">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div></section>
 </div>
 <div class="tabpane" id="pane-mixes">
 <section class="panel"><h2>Step 2 — Build a compilation</h2>
@@ -133,13 +134,13 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 </main>
 <script>
 const $=id=>document.getElementById(id), api='/api';
-let accounts=[], activeAccount=localStorage.getItem('music_channel_active')||'default', savedThumbnail='', selectedThumbId='', selectedReferenceId='', selectedTrackIds=[];
+let accounts=[], activeAccount=localStorage.getItem('music_channel_active')||'default', savedThumbnail='', selectedThumbId='', selectedReferenceId='', selectedTrackIds=[], similarSongId='';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padStart(2,'0');
 async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const text=await r.text();let j;try{j=JSON.parse(text)}catch(e){throw Error('Server returned HTTP '+r.status+' instead of JSON. Check the Flask PowerShell window for the underlying error.')}if(!r.ok)throw Error(j.error||'Request failed (HTTP '+r.status+')');return j}
 function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
-function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';selectedTrackIds=[];$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 async function loadAccounts(){
  accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
  renderAccounts();applyAccount();
@@ -165,7 +166,7 @@ $('accountForm').onsubmit=async e=>{
 };
 $('generateForm').onsubmit=async e=>{
  e.preventDefault();$('generateBtn').disabled=true;
- try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value});await showJobs()}catch(e){alert(e.message)}
+ try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,reference_song_id:similarSongId,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value});await showJobs()}catch(e){alert(e.message)}
  finally{$('generateBtn').disabled=false}
 };
 const seenFinishedCompilations=new Set();
@@ -179,8 +180,30 @@ async function refresh(){
  if(!current())return;
  const accountAtStart=activeAccount;
  const lib=await read('/songs?account_id='+encodeURIComponent(accountAtStart));if(accountAtStart!==activeAccount)return;
- $('songs').innerHTML=lib.length?lib.map(s=>'<div class="track"><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div style="flex:1"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'')+'</div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(activeAccount)+'"></audio></div>').join(''):'No songs for this channel yet.';
+ $('songs').innerHTML=lib.length?lib.map(s=>'<div class="track"><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div style="flex:1"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'<div class="muted small">Imported track: no saved generation prompt</div>')+'<div class="row"><button type="button" class="similarTrack tab" data-id="'+esc(s.id)+'" '+(s.prompt?'':'disabled')+'>Create Similar</button><button type="button" class="deleteTrack tab" data-id="'+esc(s.id)+'">Delete</button></div></div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(activeAccount)+'"></audio></div>').join(''):'No songs for this channel yet.';
  document.querySelectorAll('.trackPick').forEach(i=>i.onchange=updateSelection);updateSelection();
+ document.querySelectorAll('.similarTrack').forEach(b=>b.onclick=()=>{
+   const s=lib.find(item=>item.id===b.dataset.id);if(!s||!s.prompt)return;
+   similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
+   $('musicPrompt').value='Create an original new song with the feel of '+s.title+', with fresh musical ideas.';
+   $('autoPrompts').checked=true;
+   $('similarSource').style.display='block';
+   $('similarSource').innerHTML='Using saved prompt from: <strong>'+esc(s.title)+'</strong>. <button type="button" id="clearSimilar" class="tab">Clear reference</button>';
+   $('clearSimilar').onclick=()=>{similarSongId='';$('similarSource').style.display='none'};
+   document.querySelector('.tab[data-tab="generate"]').click();
+ });
+ document.querySelectorAll('.deleteTrack').forEach(b=>b.onclick=async()=>{
+   const s=lib.find(item=>item.id===b.dataset.id);if(!s)return;
+   if(!confirm('Permanently delete '+s.title+' and its audio file?'))return;
+   b.disabled=true;
+   try{
+     const response=await fetch('/api/songs/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(accountAtStart),{method:'DELETE'});
+     const result=await response.json();if(!response.ok)throw Error(result.error||'Delete failed');
+     selectedTrackIds=selectedTrackIds.filter(id=>id!==s.id);
+     if(similarSongId===s.id){similarSongId='';$('similarSource').style.display='none'}
+     $('libraryMessage').textContent='Deleted '+s.title;await refresh();
+   }catch(err){$('libraryMessage').textContent=err.message;b.disabled=false}
+ });
  const vids=await read('/compilations?account_id='+encodeURIComponent(activeAccount));
  const gallery=await read('/thumbnails/library?account_id='+encodeURIComponent(activeAccount));
  const thumbs=gallery.map(t=>'<option value="'+esc(t.id)+'" '+(t.id===selectedThumbId?'selected':'')+'>'+esc(t.title)+' ('+esc(t.method)+')</option>').join('');
