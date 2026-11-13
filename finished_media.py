@@ -312,30 +312,42 @@ def render_video(job_id, account_id, output_id, title, mp3, thumb, duration, cov
                                ":format=auto:shortest=1[scene]")
                 video_label = "[scene]"
             if visualizer:
-                radial = (
-                    "if(between(hypot(X-256\\,Y-256)\\,138\\,142)\\,210\\,"
-                    "if(between(hypot(X-256\\,Y-256)\\,142\\,205)\\,"
-                    "lum(512*(atan2(Y-256\\,X-256)+PI)/(2*PI)\\,"
-                    "512-(hypot(X-256\\,Y-256)-142)*8)\\,0))"
-                )
-                filters.append("[1:a]asplit=2[aout][viz]")
-                filters.append(
-                    "[viz]showfreqs=s=512x512:mode=bar:ascale=lin:fscale=log:"
-                    "colors=white:rate=24,format=gray,geq=lum=" + radial +
-                    ",format=rgba,colorkey=0x000000:0.06:0.1[ring]"
-                )
                 ring = editor_settings["ring"]
+                sensitivity = ring["sensitivity"] / 100.0
+                radial = (
+                    "if(between(hypot(X-384\\,Y-384)\\,191\\,196)\\,255\\,"
+                    "if(between(hypot(X-384\\,Y-384)\\,196\\,374)\\,"
+                    "lum(768*(atan2(Y-384\\,X-384)+PI)/(2*PI)\\,"
+                    "768-(hypot(X-384\\,Y-384)-196)*" +
+                    str(round(12.0 / sensitivity, 4)) + ")\\,0))"
+                )
+                filters.append("[1:a]asplit=2[aout][vizsource]")
+                filters.append("[vizsource]volume=6dB[viz]")
+                filters.append(
+                    "[viz]showfreqs=s=768x768:mode=bar:ascale=sqrt:fscale=log:"
+                    "colors=white:rate=24,format=gray,geq=lum=" + radial +
+                    ",format=rgba,colorkey=0x000000:0.06:0.06[ring]"
+                )
                 rr = int(ring["color"][1:3], 16) / 255
                 gg = int(ring["color"][3:5], 16) / 255
                 bb = int(ring["color"][5:7], 16) / 255
-                rw = max(64, int(1920 * ring["size"] / 100))
+                rw = max(96, int(1920 * ring["size"] / 100))
                 ring_x = int(1920 * ring["x"] / 100 - rw / 2)
                 ring_y = int(1080 * ring["y"] / 100 - rw / 2)
                 filters.append("[ring]scale=" + str(rw) + ":" + str(rw) +
-                               ",colorchannelmixer=rr=" + str(rr) + ":gg=" + str(gg) +
-                               ":bb=" + str(bb) + ":aa=" + str(ring["opacity"] / 100) + "[ringedit]")
-                filters.append(video_label + "[ringedit]overlay=" + str(ring_x) + ":" +
-                               str(ring_y) + ":shortest=1[v]")
+                    ":flags=lanczos,format=rgba,colorchannelmixer=rr=" + str(round(rr,4)) +
+                    ":gg=" + str(round(gg,4)) + ":bb=" + str(round(bb,4)) +
+                    ":aa=" + str(ring["opacity"] / 100) + ",split=2[glowsource][coresource]")
+                if ring["glow"] > 0:
+                    filters.append("[glowsource]gblur=sigma=" + str(ring["glow_blur"]) +
+                        ",colorchannelmixer=aa=" + str(ring["glow"] / 100) + "[halo]")
+                    filters.append(video_label + "[halo]overlay=x=" + str(ring_x) +
+                        ":y=" + str(ring_y) + ":format=auto:shortest=1[glowbackground]")
+                    video_label = "[glowbackground]"
+                else:
+                    filters.append("[glowsource]nullsink")
+                filters.append(video_label + "[coresource]overlay=x=" + str(ring_x) +
+                    ":y=" + str(ring_y) + ":format=auto:shortest=1[v]")
                 video_label = "[v]"
             args.extend(["-filter_complex", ";".join(filters),
                          "-map", video_label, "-map", "[aout]" if visualizer else "1:a:0"])
