@@ -400,7 +400,10 @@ def generation_worker(job_id, payload):
             title = f"{payload['title_prefix']} {index+1:02d}"
             try:
                 generate_one(description, payload["duration"], payload["instrumental"], path,
-                             on_progress=lambda message: job.update(progress=message))
+                             on_progress=lambda message: job.update(progress=message),
+                             reference_audio=payload.get("reference_audio_path"),
+                             reference_mode=payload.get("reference_mode", "style"),
+                             cover_strength=payload.get("cover_strength", 0.65))
                 duration = probe(path)
                 if duration <= 0:
                     raise ValueError("Generated file has no audio.")
@@ -450,13 +453,23 @@ def generate():
     reference_prompt = ""
     if reference_song_id:
         with db() as conn:
-            reference = conn.execute("SELECT prompt FROM songs WHERE id=? AND account_id=?", (reference_song_id, account_id)).fetchone()
+            reference = conn.execute("SELECT prompt, filename FROM songs WHERE id=? AND account_id=?", (reference_song_id, account_id)).fetchone()
         if not reference:
             return jsonify(error="Reference song not found in this channel."), 404
         reference_prompt = str(reference["prompt"] or "").strip()
-        if not reference_prompt:
-            return jsonify(error="This track has no saved generation prompt. Enter a style description manually."), 400
-    if not prompt and not reference_prompt:
+        source_file = SONGS / reference["filename"]
+        if not source_file.is_file():
+            return jsonify(error="Reference MP3 file is missing from Song Library."), 404
+    reference_mode = str(payload.get("reference_mode") or "style")
+    if reference_mode not in ("style", "cover"):
+        return jsonify(error="Choose a valid audio reference mode."), 400
+    try:
+        cover_strength = float(payload.get("cover_strength", 0.65))
+    except (ValueError, TypeError):
+        return jsonify(error="Invalid cover strength."), 400
+    if not 0.1 <= cover_strength <= 1.0:
+        return jsonify(error="Cover strength must be between 0.1 and 1."), 400
+    if not prompt and not reference_prompt and not reference_song_id:
         return jsonify(error="Enter a musical description."), 400
     if not shutil.which("ffprobe"):
         return jsonify(error="Install FFmpeg and ffprobe first."), 503
@@ -472,6 +485,8 @@ def generate():
                                 "progress": "Queued", "started": datetime.now().isoformat()}
     settings = {"count": count, "duration": duration, "genre": genre,
                 "prompt": prompt, "reference_prompt": reference_prompt, "title_prefix": title_prefix,
+                "reference_audio_path": str(source_file) if reference_song_id else None,
+                "reference_mode": reference_mode, "cover_strength": cover_strength,
                 "instrumental": bool(payload.get("instrumental", True)),
                 "account_id": account_id, "auto_prompts": bool(payload.get("auto_prompts", False)),
                 "auto_compile": bool(payload.get("auto_compile", False)),
