@@ -111,7 +111,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <div id="similarSource" class="status muted" style="display:none"></div>
 <div id="similarAudioOptions" class="status muted" style="display:none">
 <label for="similarReferenceMode">How should the AI use the source MP3?</label>
-<select id="similarReferenceMode"><option value="style">Create a new song with a similar sound (fresh melody)</option><option value="cover">Remix / reinterpret the original song</option></select>
+<select id="similarReferenceMode"><option value="style">Same music style — new melody and arrangement</option><option value="cover">Follow the original recording more closely</option></select>
 <div id="similarCoverOptions" style="display:none"><label for="similarCoverStrength">How strongly to follow the source recording</label><input type="range" id="similarCoverStrength" min="0.1" max="1" step="0.05" value="0.65"><span id="similarCoverValue">65%</span></div>
 <p class="small">The MP3 itself is passed to ACE-Step. For remix mode, use music you own or have permission to adapt.</p>
 </div>
@@ -326,9 +326,9 @@ async function refresh(){
  document.querySelectorAll('.similarTrack').forEach(b=>b.onclick=()=>{
    const s=lib.find(item=>item.id===b.dataset.id);if(!s)return;
    similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
-   $('musicPrompt').value='Create an original new song with the feel of '+s.title+', with fresh musical ideas.';
-   $('autoPrompts').checked=!!s.prompt;$('similarSource').style.display='block';
-   $('similarAudioOptions').style.display='block';
+   $('musicPrompt').value='Match the EXACT music style of '+s.title+': same genre, characteristic instruments, groove, tempo feel, energy, sound design and overall atmosphere. Create a new original composition in this same style.';
+   $('autoPrompts').checked=false;$('similarSource').style.display='block';
+   $('similarAudioOptions').style.display='block';$('similarReferenceMode').value='style';$('similarReferenceMode').onchange();
    $('similarSource').innerHTML='Using actual MP3 from: <strong>'+esc(s.title)+'</strong>'+(s.prompt?' plus its saved prompt':' (no AI prompt needed)')+'. <button type="button" id="clearSimilar" class="tab">Clear reference</button>';
    $('clearSimilar').onclick=()=>{similarSongId='';$('similarSource').style.display='none';$('similarAudioOptions').style.display='none'};
    document.querySelector('.tab[data-tab="generate"]').click();
