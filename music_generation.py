@@ -67,7 +67,31 @@ def _fetch_audio(url, output):
             temporary.unlink(missing_ok=True)
             raise
 
-def generate_one(description, duration, instrumental, path, on_progress=None):
+def _post_audio_task(url, payload, audio_source, mode, timeout=120):
+    """Upload a real local MP3 to ACE-Step in multipart format."""
+    audio_source = Path(audio_source)
+    if not audio_source.is_file():
+        raise FileNotFoundError("Reference audio file is missing")
+    if mode not in ("style", "cover"):
+        raise ValueError("Unknown audio-reference mode")
+    fields = {key: ("true" if val is True else "false" if val is False else str(val))
+              for key, val in payload.items()}
+    fields["task_type"] = "cover" if mode == "cover" else "text2music"
+    file_field = "src_audio" if mode == "cover" else "reference_audio"
+    mime = "audio/mpeg" if audio_source.suffix.lower() == ".mp3" else "audio/wav"
+    with audio_source.open("rb") as stream, session() as client:
+        response = client.post(url, data=fields,
+            files={file_field: (audio_source.name, stream, mime)}, timeout=(15, timeout))
+        response.raise_for_status()
+        result = response.json()
+    if result.get("code", 200) != 200:
+        raise RuntimeError("ACE-Step audio reference failed: " +
+                           str(result.get("error") or result)[:350])
+    return result
+
+
+def generate_one(description, duration, instrumental, path, on_progress=None,
+                 reference_audio=None, reference_mode="style", cover_strength=0.65):
     """Submit once, keep its task ID, recover connection loss during polling."""
     base = base_url()
     payload = {
@@ -79,8 +103,18 @@ def generate_one(description, duration, instrumental, path, on_progress=None):
         "audio_format": "mp3",
         "batch_size": 1,
     }
+    if reference_audio is not None:
+        if reference_mode not in ("style", "cover"):
+            raise ValueError("Reference mode must be style or cover")
+        if not 0.1 <= float(cover_strength) <= 1.0:
+            raise ValueError("Cover strength must be between 0.1 and 1")
+        if reference_mode == "cover":
+            payload["audio_cover_strength"] = float(cover_strength)
+            payload["instruction"] = "Reimagine this audio with the specified style and instruments"
     try:
-        body = _post_json(base + "/release_task", payload, timeout=60)
+        body = (_post_audio_task(base + "/release_task", payload, reference_audio, reference_mode)
+                if reference_audio is not None else
+                _post_json(base + "/release_task", payload, timeout=60))
     except RECOVERABLE as error:
         raise RuntimeError(
             "Connection lost while submitting the generation task. "
