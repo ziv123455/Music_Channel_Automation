@@ -77,6 +77,9 @@ def _post_audio_task(url, payload, audio_source, mode, timeout=120):
     fields = {key: ("true" if val is True else "false" if val is False else str(val))
               for key, val in payload.items()}
     fields["task_type"] = "cover" if mode == "cover" else "text2music"
+    if mode == "style":
+        fields["use_cot_caption"] = "false"
+        fields["audio_cover_strength"] = "0.2"
     file_field = "src_audio" if mode == "cover" else "reference_audio"
     mime = "audio/mpeg" if audio_source.suffix.lower() == ".mp3" else "audio/wav"
     with audio_source.open("rb") as stream, session() as client:
@@ -110,7 +113,8 @@ def generate_one(description, duration, instrumental, path, on_progress=None,
             raise ValueError("Cover strength must be between 0.1 and 1")
         if reference_mode == "cover":
             payload["audio_cover_strength"] = float(cover_strength)
-            payload["instruction"] = "Reimagine this audio with the specified style and instruments"
+            payload["instruction"] = ("Keep the same genre, tempo feel, instrumentation, mood, sound design "
+                                      "and production style as the source. Create a new variation.")
     try:
         body = (_post_audio_task(base + "/release_task", payload, reference_audio, reference_mode)
                 if reference_audio is not None else
