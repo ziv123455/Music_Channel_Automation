@@ -378,14 +378,22 @@ def generation_worker(job_id, payload):
             path = SONGS / filename
             genre = payload["genre"].strip()
             base_prompt = payload["prompt"].strip()
-            if payload.get("reference_prompt"):
+            style_reference = bool(payload.get("reference_audio_path") and payload.get("reference_mode") == "style")
+            if style_reference:
                 base_prompt = (
-                    "Create an ORIGINAL song with similar genre, instruments, tempo feel and mood. "
-                    "Invent entirely new melodies, harmonies, phrases and arrangements; never copy "
-                    "the reference recording. Source production description: " +
-                    payload["reference_prompt"] + ". Additional direction: " + base_prompt
+                    "Preserve the SAME style as the reference audio: genre, instruments, vocals, "
+                    "rhythm, tempo feel, sound design, energy, production and atmosphere. "
+                    "Do not change genres or replace the characteristic instruments. "
+                    "Compose a new original melody and variation within that exact style. "
+                    + ("Additional direction: " + base_prompt if base_prompt else "")
                 )
-            if payload.get("auto_prompts"):
+            elif payload.get("reference_prompt"):
+                base_prompt = (
+                    "Compose original music similar in genre, instrumentation and mood. "
+                    "Invent new musical phrases. Source description: " +
+                    payload["reference_prompt"] + ". Extra direction: " + base_prompt
+                )
+            if payload.get("auto_prompts") and not style_reference:
                 job["progress"] = "AI writing distinct prompt for song " + str(index+1)
                 try:
                     description = compose_music_prompt(account, base_prompt, index+1, prompts)
@@ -395,7 +403,7 @@ def generation_worker(job_id, payload):
                     job["progress"] = "AI prompt generation failed; batch stopped"
                     return
             else:
-                description = ", ".join(part for part in (genre, base_prompt) if part)
+                description = base_prompt if style_reference else ", ".join(part for part in (genre, base_prompt) if part)
             prompts.append(description)
             title = f"{payload['title_prefix']} {index+1:02d}"
             try:
