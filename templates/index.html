@@ -109,6 +109,12 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 </div>
 <label for="compilationTitle">Compilation title</label><input id="compilationTitle" maxlength="100" value="1 Hour of Peaceful Classical Music">
 <div id="similarSource" class="status muted" style="display:none"></div>
+<div id="similarAudioOptions" class="status muted" style="display:none">
+<label for="similarReferenceMode">How should the AI use the source MP3?</label>
+<select id="similarReferenceMode"><option value="style">Create a new song with a similar sound (fresh melody)</option><option value="cover">Remix / reinterpret the original song</option></select>
+<div id="similarCoverOptions" style="display:none"><label for="similarCoverStrength">How strongly to follow the source recording</label><input type="range" id="similarCoverStrength" min="0.1" max="1" step="0.05" value="0.65"><span id="similarCoverValue">65%</span></div>
+<p class="small">The MP3 itself is passed to ACE-Step. For remix mode, use music you own or have permission to adapt.</p>
+</div>
 <div class="muted" style="margin:9px 0">Songs are stored in the library first. Optionally make a draft tracklist, then choose a thumbnail and render it later.</div>
 <div class="row"><button id="generateBtn" type="submit">Generate Song Batch</button><button type="button" id="checkConnections" class="tab">Check AI connections</button><button type="button" id="previewPrompt" class="tab">Preview one AI prompt</button></div>
 <div id="promptPreview" class="status muted" style="display:none"></div>
@@ -118,7 +124,7 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 
 <div class="tabpane" id="pane-library">
 <section class="panel"><h2>Import songs for this channel</h2><form id="upload" class="row"><input name="audio" type="file" accept="audio/*" required><input name="title" type="text" placeholder="Optional song title"><button>Import audio</button></form><p id="uploadStatus" class="muted"></p></section>
-<section class="panel"><h2>Channel song library</h2><p class="muted">Select tracks for compilations, use Create Similar to make new songs inspired by a saved track prompt, or delete unwanted songs. Active compilation drafts are protected.</p><div class="folder-toolbar"><input id="newFolderName" type="text" maxlength="80" placeholder="New folder name"><button type="button" id="createSongFolder">+ Create Folder</button></div><div id="songs" class="song-folders">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div>
+<section class="panel"><h2>Channel song library</h2><p class="muted">Create Similar also works with imported MP3s that have no saved AI prompt. The actual audio is used as a reference.</p><div class="folder-toolbar"><input id="newFolderName" type="text" maxlength="80" placeholder="New folder name"><button type="button" id="createSongFolder">+ Create Folder</button></div><div id="songs" class="song-folders">Loading...</div><div id="selectionStats" class="muted"></div><div id="libraryMessage" class="muted"></div>
 <div class="status">
 <h3>Build a finished MP3 from selected songs</h3>
 <p class="muted">Tick songs above. Move tracks up or down to set their exact playback order; transitions smoothly overlap the end of each track with the next.</p>
@@ -266,7 +272,7 @@ const dur=n=>Math.floor(Number(n)/60)+':'+String(Math.floor(Number(n)%60)).padSt
 async function read(path){const r=await fetch(api+path),j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
 async function post(path,data){const r=await fetch(api+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const text=await r.text();let j;try{j=JSON.parse(text)}catch(e){throw Error('Server returned HTTP '+r.status+' instead of JSON. Check the Flask PowerShell window for the underlying error.')}if(!r.ok)throw Error(j.error||'Request failed (HTTP '+r.status+')');return j}
 function current(){return accounts.find(a=>a.id===activeAccount)||accounts[0]}
-function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';selectedTrackIds=[];mediaMp3s=[];restoreEditorSettings();$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
+function applyAccount(){const a=current();if(!a)return;activeAccount=a.id;localStorage.setItem('music_channel_active',activeAccount);$('channelSwitcher').value=a.id;$('genre').value=a.genre||'Classical';$('prefix').value=(a.name+' Track').slice(0,90);$('compilationTitle').value=('1 Hour of '+a.genre+' Music').slice(0,100);savedThumbnail=a.thumbnail||'';selectedThumbId='';selectedReferenceId='';similarSongId='';$('similarSource').style.display='none';$('similarAudioOptions').style.display='none';selectedTrackIds=[];mediaMp3s=[];restoreEditorSettings();$('thumbPreview').style.display=savedThumbnail?'block':'none';$('thumbPreview').src=savedThumbnail?'/api/thumbnail/'+encodeURIComponent(savedThumbnail):'';$('thumbLink').innerHTML='';refresh();showJobs();loadGallery();loadReferences();checkImageAi();checkVisionAi()}
 async function loadAccounts(){
  accounts=await read('/accounts');$('channelSwitcher').innerHTML=accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.name)+' — '+esc(a.email)+'</option>').join('');
  renderAccounts();applyAccount();
@@ -290,9 +296,11 @@ $('previewPrompt').onclick=async()=>{const box=$('promptPreview');box.style.disp
 $('accountForm').onsubmit=async e=>{
  e.preventDefault();try{const j=await post('/accounts',{name:$('accountName').value,email:$('accountEmail').value,genre:$('accountGenre').value,description:$('accountDescription').value});activeAccount=j.id;await loadAccounts();$('accountStatus').textContent='Channel added!';e.target.reset()}catch(err){$('accountStatus').textContent=err.message}
 };
+$('similarReferenceMode').onchange=()=>{$('similarCoverOptions').style.display=$('similarReferenceMode').value==='cover'?'block':'none'};
+$('similarCoverStrength').oninput=()=>{$('similarCoverValue').textContent=Math.round(Number($('similarCoverStrength').value)*100)+'%'};
 $('generateForm').onsubmit=async e=>{
  e.preventDefault();$('generateBtn').disabled=true;
- try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,reference_song_id:similarSongId,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value});await showJobs()}catch(e){alert(e.message)}
+ try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,reference_song_id:similarSongId,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value,reference_mode:$('similarReferenceMode').value,cover_strength:Number($('similarCoverStrength').value)});await showJobs()}catch(e){alert(e.message)}
  finally{$('generateBtn').disabled=false}
 };
 const seenFinishedCompilations=new Set();
@@ -311,17 +319,18 @@ async function refresh(){
  const folderCard=group=>{
   const tracks=lib.filter(s=>(s.folder_id||'')===group.id);
   const header=group.id?'<button type="button" class="renameFolder tab" data-id="'+esc(group.id)+'">Rename</button><button type="button" class="removeFolder tab" data-id="'+esc(group.id)+'">Delete folder</button>':'';
-  return '<section class="song-folder" data-folder-id="'+esc(group.id)+'"><div class="song-folder-header"><h3>📁 '+esc(group.name)+' <span class="pill">'+tracks.length+'</span></h3><div class="row">'+header+'</div></div><div class="folder-content">'+(tracks.length?tracks.map(s=>'<div class="track" data-song-id="'+esc(s.id)+'"><span class="song-drag-handle" draggable="true" data-id="'+esc(s.id)+'" title="Drag song to another folder" aria-label="Drag song">⠿</span><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div class="track-details"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'<div class="muted small">No saved AI prompt</div>')+'<div class="row"><button type="button" class="renameTrack tab" data-id="'+esc(s.id)+'">Rename</button><button type="button" class="similarTrack tab" data-id="'+esc(s.id)+'" '+(s.prompt?'':'disabled')+'>Create Similar</button><button type="button" class="deleteTrack tab" data-id="'+esc(s.id)+'">Delete</button></div></div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(accountAtStart)+'"></audio></div>').join(''):'<div class="folder-empty">Drop songs here</div>')+'</div></section>';
+  return '<section class="song-folder" data-folder-id="'+esc(group.id)+'"><div class="song-folder-header"><h3>📁 '+esc(group.name)+' <span class="pill">'+tracks.length+'</span></h3><div class="row">'+header+'</div></div><div class="folder-content">'+(tracks.length?tracks.map(s=>'<div class="track" data-song-id="'+esc(s.id)+'"><span class="song-drag-handle" draggable="true" data-id="'+esc(s.id)+'" title="Drag song to another folder" aria-label="Drag song">⠿</span><input type="checkbox" class="trackPick" value="'+esc(s.id)+'" '+(selectedTrackIds.includes(s.id)?'checked':'')+'><div class="track-details"><strong>'+esc(s.title)+'</strong><div class="muted">'+dur(s.duration)+'</div>'+(s.prompt?'<details><summary class="muted">Show AI prompt</summary><div class="small">'+esc(s.prompt)+'</div></details>':'<div class="muted small">No saved AI prompt</div>')+'<div class="row"><button type="button" class="renameTrack tab" data-id="'+esc(s.id)+'">Rename</button><button type="button" class="similarTrack tab" data-id="'+esc(s.id)+'" '+''+'>Create Similar</button><button type="button" class="deleteTrack tab" data-id="'+esc(s.id)+'">Delete</button></div></div><audio controls preload="none" src="/api/song/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(accountAtStart)+'"></audio></div>').join(''):'<div class="folder-empty">Drop songs here</div>')+'</div></section>';
  };
  $('songs').innerHTML=groups.map(folderCard).join('');
  document.querySelectorAll('.trackPick').forEach(i=>i.onchange=e=>{const id=e.target.value;if(e.target.checked){if(!selectedTrackIds.includes(id))selectedTrackIds.push(id)}else{selectedTrackIds=selectedTrackIds.filter(x=>x!==id)}updateSelection()});updateSelection();
  document.querySelectorAll('.similarTrack').forEach(b=>b.onclick=()=>{
-   const s=lib.find(item=>item.id===b.dataset.id);if(!s||!s.prompt)return;
+   const s=lib.find(item=>item.id===b.dataset.id);if(!s)return;
    similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
    $('musicPrompt').value='Create an original new song with the feel of '+s.title+', with fresh musical ideas.';
-   $('autoPrompts').checked=true;$('similarSource').style.display='block';
-   $('similarSource').innerHTML='Using saved prompt from: <strong>'+esc(s.title)+'</strong>. <button type="button" id="clearSimilar" class="tab">Clear reference</button>';
-   $('clearSimilar').onclick=()=>{similarSongId='';$('similarSource').style.display='none'};
+   $('autoPrompts').checked=!!s.prompt;$('similarSource').style.display='block';
+   $('similarAudioOptions').style.display='block';
+   $('similarSource').innerHTML='Using actual MP3 from: <strong>'+esc(s.title)+'</strong>'+(s.prompt?' plus its saved prompt':' (no AI prompt needed)')+'. <button type="button" id="clearSimilar" class="tab">Clear reference</button>';
+   $('clearSimilar').onclick=()=>{similarSongId='';$('similarSource').style.display='none';$('similarAudioOptions').style.display='none'};
    document.querySelector('.tab[data-tab="generate"]').click();
  });
  document.querySelectorAll('.renameTrack').forEach(b=>b.onclick=async()=>{
@@ -337,7 +346,7 @@ async function refresh(){
      const response=await fetch('/api/songs/'+encodeURIComponent(s.id)+'?account_id='+encodeURIComponent(accountAtStart),{method:'DELETE'});
      const result=await response.json();if(!response.ok)throw Error(result.error||'Delete failed');
      selectedTrackIds=selectedTrackIds.filter(id=>id!==s.id);
-     if(similarSongId===s.id){similarSongId='';$('similarSource').style.display='none'}
+     if(similarSongId===s.id){similarSongId='';$('similarSource').style.display='none';$('similarAudioOptions').style.display='none'}
      $('libraryMessage').textContent='Deleted '+s.title;await refresh();
    }catch(err){$('libraryMessage').textContent=err.message;b.disabled=false}
  });
