@@ -399,6 +399,11 @@ def get_visualizer(job_id):
     return jsonify(job)
 
 
+@bp.get("/api/brand/logo")
+def ziv_logo():
+    return send_from_directory(ROOT / "assets", "ziv-logo.webp")
+
+
 @bp.get("/api/visualizers/<job_id>/download")
 def download_visualizer(job_id):
     """Primary download includes both MP4 and clean thumbnail in one ZIP."""
