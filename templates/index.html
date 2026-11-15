@@ -13,7 +13,7 @@ input[type=range]{width:100%;accent-color:#dd97ee}button{width:100%;margin-top:2
 button:disabled{opacity:.5;cursor:wait}
 .stage{width:100%;aspect-ratio:16/9;background:#16131e;border-radius:12px;position:relative;overflow:hidden}
 .stage img{display:none;position:absolute}#back{inset:-8%;height:116%;width:116%;object-fit:cover;filter:blur(22px) brightness(.43)}
-#art{width:42.1875%;aspect-ratio:1;object-fit:cover;top:50%;left:50%;transform:translate(-50%,-50%) scale(var(--beat-scale,1));border:2px solid #ffe9df;image-rendering:auto;backface-visibility:hidden;will-change:transform;box-shadow:0 8px 35px #0009}
+#art{width:42.1875%;aspect-ratio:1;object-fit:cover;top:50%;left:50%;transform:translate(-50%,-50%) scale(var(--beat-scale,1));border:0;image-rendering:auto;backface-visibility:hidden;will-change:transform;box-shadow:0 8px 35px #0009}
 #spikes{position:absolute;inset:0;width:100%;height:100%}
 #hint{position:absolute;inset:0;display:grid;place-items:center;color:#b1a7bf;font-size:14px}
 .crop-editor{margin-top:12px;padding:12px;background:#15141e;border:1px solid #524e67;border-radius:12px}
@@ -48,7 +48,7 @@ button:disabled{opacity:.5;cursor:wait}
 </form><p><small>Output: 1280 x 720, 30 FPS, high-quality encoding. For the sharpest results, upload a high-resolution image (ideally 1000px+ square).</small></p></section>
 <section class="panel"><h2>Cover preview</h2>
 <div class="stage"><img id="back" alt=""><img id="art" alt=""><canvas id="spikes" width="1280" height="720"></canvas><div id="hint">Upload a picture to preview your square cover</div></div>
-<p><small>Play the uploaded song to preview the square bouncing with the bass and the waveform moving around all four sides of its border. For sharp artwork, use the original high-resolution photo instead of a screenshot or thumbnail.</small></p>
+<p><small>Play the uploaded song to preview the square bouncing with the bass and the smooth glowing waveform moving along its left and right edges. For sharp artwork, use the original high-resolution photo instead of a screenshot or thumbnail.</small></p>
 <audio id="player" controls style="display:none;width:100%"></audio>
 </section></div></main>
 <script>
@@ -105,36 +105,37 @@ function spikes(beat=0,wave=.42,time=0){
  const canvas=$('spikes'),ctx=canvas.getContext('2d');
  const sensitivity=Number($('sensitivity').value);
  const color=$('color').value;
- ctx.clearRect(0,0,1280,720);
+ ctx.clearRect(0,0,canvas.width,canvas.height);
  const side=540*(1+.045*beat);
- const left=(1280-side)/2,top=(720-side)/2,right=left+side,bottom=top+side;
+ const left=(1280-side)/2,top=(720-side)/2,right=left+side;
  $('art').style.setProperty('--beat-scale',String(1+.045*beat));
- const activity=Math.min(1,wave*.90+beat*.35);
- const count=95,maxLength=95*sensitivity;
- const gap=side/count,barHeight=Math.max(2,gap*.42);
- ctx.fillStyle=color;
- ctx.shadowColor='rgba(16,7,24,.72)';
- ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;ctx.shadowBlur=5;
- // First the soft halo, then the precise thin bar cores.
- function drawBars(){
-  for(let i=0;i<count;i++){
-   const t=(i+.5)/count,y=top+t*side;
-   const w1=(Math.sin(i*.23+time*.18)+1)/2;
-   const w2=(Math.sin(i*.51-time*.11)+1)/2;
-   const shape=.35+.65*(.6*w1+.4*w2);
-   const length=Math.max(8,Math.min(maxLength,8+maxLength*activity*shape));
-   ctx.fillRect(left-length,y-barHeight/2,length-3,barHeight);
-   ctx.fillRect(right+3,y-barHeight/2,length-3,barHeight);
-  }
+ const activity=Math.min(1,wave*.85+beat*.4);
+ const leftPoints=[],rightPoints=[];
+ for(let y=0;y<=side;y+=3){
+   const t=y/side;
+   const taper=Math.max(0,Math.min(1,t*19,(1-t)*19));
+   const lobes=
+     .43*((1+Math.sin(t*Math.PI*8.5+time*.062))/2)**5+
+     .35*((1+Math.sin(t*Math.PI*16.5-time*.083))/2)**7+
+     .22*((1+Math.sin(t*Math.PI*32+time*.12))/2)**8;
+   const length=taper*(6+117*sensitivity*activity*(.15+.85*lobes));
+   leftPoints.push([left-length,top+y]);
+   rightPoints.push([right+length,top+y]);
  }
- drawBars();
- ctx.shadowColor=color;
- ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;ctx.shadowBlur=9;
- drawBars();
- ctx.shadowBlur=0;
- ctx.strokeStyle=color;
- ctx.lineWidth=2;
- ctx.strokeRect(left-1,top-1,side+2,side+2);
+ function drawContour(points){
+   if(!points.length)return;
+   ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
+   for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);
+   ctx.stroke();
+ }
+ ctx.lineCap='round';ctx.lineJoin='round';
+ ctx.strokeStyle=color;ctx.lineWidth=2;
+ ctx.shadowColor='rgba(10,6,16,.7)';
+ ctx.shadowBlur=6;ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;
+ drawContour(leftPoints);drawContour(rightPoints);
+ ctx.shadowColor=color;ctx.shadowBlur=12;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
+ drawContour(leftPoints);drawContour(rightPoints);
+ ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
 }
 function startReactivePreview(){
  const player=$('player');
@@ -189,7 +190,7 @@ $('image').addEventListener('change',()=>{
  source.src=imageUrl;
 });
 $('audio').addEventListener('change',()=>{if(audioUrl)URL.revokeObjectURL(audioUrl);const f=$('audio').files[0];if(!f)return;audioUrl=URL.createObjectURL(f);$('player').src=audioUrl;$('player').style.display='block';});
-$('color').addEventListener('input',()=>{$('art').style.borderColor=$('color').value;spikes();});
+$('color').addEventListener('input',()=>{spikes();});
 $('sensitivity').addEventListener('input',()=>{$('value').textContent=Number($('sensitivity').value).toFixed(1)+'x';spikes();});
 $('form').addEventListener('submit',async e=>{
 e.preventDefault();const btn=$('create'),p=$('progress'),msg=$('msg'),link=$('download');btn.disabled=true;p.value=0;p.style.display='block';link.style.display='none';msg.textContent='Uploading song and image...';
