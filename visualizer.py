@@ -103,51 +103,56 @@ def _paint_cover(frame, cover, kick, resized_cache):
 
 
 def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
-    """Mirrored horizontal equalizer bars only on the bouncing square's sides."""
+    """Draw two smooth glowing waveform contours, never horizontal equalizer bars."""
     left, top, right, bottom = box
-    side = bottom - top
+    height = bottom - top
     rgb = tuple(int(color[k:k + 2], 16) for k in (1, 3, 5))
-    activity = max(0.0, min(1.0, level * .90 + kick * .35))
-    count = 95
-    max_length = 95 * sensitivity
-    pad = 200
-    x0 = max(0, int(left - pad))
-    y0 = max(0, int(top - 15))
-    x1 = min(SIZE[0], int(right + pad))
-    y1 = min(SIZE[1], int(bottom + 15))
+    activity = max(0.0, min(1.0, level * .85 + kick * .4))
+    padding = 165
+    x0 = max(0, int(left - padding))
+    y0 = max(0, int(top - 18))
+    x1 = min(SIZE[0], int(right + padding))
+    y1 = min(SIZE[1], int(bottom + 18))
+    layer = Image.new("RGBA", (x1-x0, y1-y0), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    left_points = []
+    right_points = []
 
-    # Draw the full bar set onto an alpha layer, leaving the cover untouched.
-    bars = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(bars)
-    gap = side / count
-    bar_height = max(2, int(gap * .42))
-    for i in range(count):
-        t = (i + .5) / count
-        yy = top + t * side - y0
-        wave1 = .5 + .5 * math.sin(i * .23 + index * .18)
-        wave2 = .5 + .5 * math.sin(i * .51 - index * .11)
-        shape = .35 + .65 * (.6 * wave1 + .4 * wave2)
-        length = max(8, min(max_length, 8 + max_length * activity * shape))
-        y1_bar = round(yy - bar_height / 2)
-        y2_bar = y1_bar + bar_height - 1
-        draw.rectangle((round(left - length) - x0, y1_bar,
-                        round(left - 3) - x0, y2_bar), fill=(*rgb, 255))
-        draw.rectangle((round(right + 3) - x0, y1_bar,
-                        round(right + length) - x0, y2_bar), fill=(*rgb, 255))
+    # Each Y position gets one smoothly varying contour offset. Long, low-
+    # frequency lobes plus subtle higher-frequency details create organic
+    # waveform peaks without the comb-like appearance of separate bars.
+    step = 3
+    for pixel_y in range(0, height + step, step):
+        y = min(height, pixel_y)
+        t = y / height
+        # Fade to zero at the endpoints to avoid top/bottom connecting bars.
+        taper = min(1.0, t * 19, (1.0 - t) * 19)
+        lobes = (
+            .43 * ((1 + math.sin(t * math.pi * 8.5 + index * .062)) / 2) ** 5
+            + .35 * ((1 + math.sin(t * math.pi * 16.5 - index * .083)) / 2) ** 7
+            + .22 * ((1 + math.sin(t * math.pi * 32 + index * .12)) / 2) ** 8
+        )
+        length = taper * (6 + 117 * sensitivity * activity * (.15 + .85 * lobes))
+        yy = top + y - y0
+        left_points.append((round(left - length - x0), round(yy)))
+        right_points.append((round(right + length - x0), round(yy)))
 
-    # Dark offset shadow and a soft tinted halo behind the crisp bars.
-    shadow = Image.new("RGBA", bars.size, (12, 7, 18, 0))
-    shadow.putalpha(bars.getchannel("A").filter(
-        ImageFilter.GaussianBlur(4.5)).point(lambda alpha: round(alpha * .38)))
+    # Make a thin, continuous, bright path and composite glow separately.
+    d.line(left_points, fill=(*rgb, 255), width=2, joint="curve")
+    d.line(right_points, fill=(*rgb, 255), width=2, joint="curve")
+
+    alpha = layer.getchannel("A")
+    shadow = Image.new("RGBA", layer.size, (10, 6, 16, 0))
+    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(5)).point(
+        lambda value: round(value * .50)))
     shadow = ImageChops.offset(shadow, 2, 3)
-    glow = bars.filter(ImageFilter.GaussianBlur(5))
-    glow.putalpha(glow.getchannel("A").point(lambda alpha: round(alpha * .45)))
-    effects = Image.alpha_composite(Image.alpha_composite(shadow, glow), bars)
-    frame.paste(effects.convert("RGB"), (x0, y0), effects.getchannel("A"))
 
-    # No top/bottom waves. A restrained frame line keeps the square defined.
-    outline = ImageDraw.Draw(frame)
-    outline.rectangle((left - 1, top - 1, right, bottom), outline=rgb, width=2)
+    glow = Image.new("RGBA", layer.size, (*rgb, 0))
+    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(6.5)).point(
+        lambda value: round(value * .78)))
+
+    combined = Image.alpha_composite(Image.alpha_composite(shadow, glow), layer)
+    frame.paste(combined.convert("RGB"), (x0, y0), combined.getchannel("A"))
 
 
 def _render(job_id, sound, image, title, color, sensitivity, crop):
