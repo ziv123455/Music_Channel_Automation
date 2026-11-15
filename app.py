@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import sqlite3, subprocess, shutil, uuid, threading, json
 from music_generation import check_connection, generate_one, base_url
+from minimax_studio import generate_one as minimax_generate_one, status as minimax_status
 from channel_features import bp as channel_blueprint, initialize as initialize_channels, valid_account, compose_music_prompt, connect as channel_db, THUMBS
 from compilation_pipeline import bp as pipeline_blueprint, init as initialize_pipeline, configure_render, create_draft
 from finished_media import bp as finished_media_blueprint, initialize as initialize_finished_media
@@ -407,11 +408,16 @@ def generation_worker(job_id, payload):
             prompts.append(description)
             title = f"{payload['title_prefix']} {index+1:02d}"
             try:
-                generate_one(description, payload["duration"], payload["instrumental"], path,
-                             on_progress=lambda message: job.update(progress=message),
-                             reference_audio=payload.get("reference_audio_path"),
-                             reference_mode=payload.get("reference_mode", "style"),
-                             cover_strength=payload.get("cover_strength", 0.65))
+                if payload.get("engine") == "minimax":
+                    minimax_generate_one(description, genre, payload["duration"],
+                                         payload["instrumental"], path, title,
+                                         on_progress=lambda message: job.update(progress=message))
+                else:
+                    generate_one(description, payload["duration"], payload["instrumental"], path,
+                                 on_progress=lambda message: job.update(progress=message),
+                                 reference_audio=payload.get("reference_audio_path"),
+                                 reference_mode=payload.get("reference_mode", "style"),
+                                 cover_strength=payload.get("cover_strength", 0.65))
                 duration = probe(path)
                 if duration <= 0:
                     raise ValueError("Generated file has no audio.")
@@ -440,6 +446,10 @@ def generation_worker(job_id, payload):
         job["progress"] = str(error)
     finally:
         generation_lock.release()
+
+@app.get("/api/minimax/status")
+def minimax_connection_status():
+    return jsonify(minimax_status())
 
 @app.post("/api/generate")
 def generate():
@@ -481,17 +491,27 @@ def generate():
         return jsonify(error="Enter a musical description."), 400
     if not shutil.which("ffprobe"):
         return jsonify(error="Install FFmpeg and ffprobe first."), 503
-    try:
-        check_connection()
-    except Exception as error:
-        return jsonify(error="ACE-Step is not connected: " + str(error)), 503
+    engine = str(payload.get("engine") or "ace")
+    if engine not in ("ace", "minimax"):
+        return jsonify(error="Invalid music engine"), 400
+    if engine == "minimax":
+        if reference_song_id:
+            return jsonify(error="MiniMax Studio does not currently accept MP3 style references through this integration. Choose ACE-Step for Create Similar."), 400
+        state = minimax_status()
+        if not state.get("connected") or not state.get("generation_available"):
+            return jsonify(error="MiniMax Studio is not available. Open MiniMax Music 3 Studio and ensure its models are ready. " + str(state.get("error") or state.get("status"))[:250]), 503
+    else:
+        try:
+            check_connection()
+        except Exception as error:
+            return jsonify(error="ACE-Step is not connected: " + str(error)), 503
     if not generation_lock.acquire(blocking=False):
         return jsonify(error="A generation batch is already running."), 409
     job_id = uuid.uuid4().hex
     generation_jobs[job_id] = {"id": job_id, "status": "running", "current": 0,
                                 "count": count, "account_id": account_id, "completed": 0, "results": [], "failures": [],
                                 "progress": "Queued", "started": datetime.now().isoformat()}
-    settings = {"count": count, "duration": duration, "genre": genre,
+    settings = {"count": count, "duration": duration, "genre": genre, "engine": engine,
                 "prompt": prompt, "reference_prompt": reference_prompt, "title_prefix": title_prefix,
                 "reference_audio_path": str(source_file) if reference_song_id else None,
                 "reference_mode": reference_mode, "cover_strength": cover_strength,
