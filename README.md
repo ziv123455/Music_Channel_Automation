@@ -28,3 +28,7 @@ The waveform now traces all four moving edges of the bass-bouncing square, rathe
 ## Left/right smooth audio contours
 
 The visualizer draws two continuously connected, smoothly varying sound-wave outlines (one on each side of the bouncing image), synchronized with audio amplitude and bass energy. Each contour has a gentle glow and drop shadow. The code explicitly removes the top and bottom frame lines and every top/bottom bar from both the MP4 renderer and browser preview. Drag-to-crop, cover beat bounce and Git auto-sync remain unchanged. Existing exported MP4s do not change automatically; create a new export after updating.
+
+## Gentle moving background
+
+The blurred source image now has a slow ambient horizontal/vertical drift behind the centered artwork. The renderer builds an oversized, dark, blurred backdrop once, then smoothly pans a 1280x720 crop over it without exposing empty edges. The live preview uses a matching slow CSS animation. The central cover, smooth left/right waveform, crop controls and auto-sync scripts are unchanged.
