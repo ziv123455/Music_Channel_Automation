@@ -109,33 +109,42 @@ function spikes(beat=0,wave=.42,time=0){
  const side=540*(1+.045*beat);
  const left=(1280-side)/2,top=(720-side)/2,right=left+side;
  $('art').style.setProperty('--beat-scale',String(1+.045*beat));
- const activity=Math.min(1,wave*.85+beat*.4);
+ const activity=Math.min(1,wave*.80+beat*.35);
  const leftPoints=[],rightPoints=[];
- for(let y=0;y<=side;y+=3){
+ for(let y=0;y<side;y+=2){
    const t=y/side;
-   const taper=Math.max(0,Math.min(1,t*19,(1-t)*19));
+   const taper=Math.max(0,Math.min(1,t*14,(1-t)*14));
    const lobes=
-     .43*((1+Math.sin(t*Math.PI*8.5+time*.062))/2)**5+
-     .35*((1+Math.sin(t*Math.PI*16.5-time*.083))/2)**7+
-     .22*((1+Math.sin(t*Math.PI*32+time*.12))/2)**8;
-   const length=taper*(6+117*sensitivity*activity*(.15+.85*lobes));
+     .55*Math.pow((1+Math.sin(t*Math.PI*6+time*.045))/2,3)+
+     .30*Math.pow((1+Math.sin(t*Math.PI*11-time*.060))/2,4)+
+     .15*Math.pow((1+Math.sin(t*Math.PI*18+time*.080))/2,5);
+   const length=taper*(5+100*sensitivity*activity*(.20+.80*lobes));
    leftPoints.push([left-length,top+y]);
    rightPoints.push([right+length,top+y]);
  }
- function drawContour(points){
-   if(!points.length)return;
-   ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
-   for(let i=1;i<points.length;i++)ctx.lineTo(points[i][0],points[i][1]);
+ leftPoints.push([left,top+side]);rightPoints.push([right,top+side]);
+ function drawSmooth(points){
+   if(points.length<2)return;
+   ctx.beginPath();
+   ctx.moveTo(points[0][0],points[0][1]);
+   for(let i=1;i<points.length-1;i++){
+     const midX=(points[i][0]+points[i+1][0])/2;
+     const midY=(points[i][1]+points[i+1][1])/2;
+     ctx.quadraticCurveTo(points[i][0],points[i][1],midX,midY);
+   }
+   const last=points[points.length-1];
+   ctx.lineTo(last[0],last[1]);
    ctx.stroke();
  }
- ctx.lineCap='round';ctx.lineJoin='round';
- ctx.strokeStyle=color;ctx.lineWidth=2;
- ctx.shadowColor='rgba(10,6,16,.7)';
- ctx.shadowBlur=6;ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;
- drawContour(leftPoints);drawContour(rightPoints);
+ ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=2;ctx.strokeStyle=color;
+ ctx.shadowColor='rgba(10,6,16,.7)';ctx.shadowBlur=6;
+ ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;
+ drawSmooth(leftPoints);drawSmooth(rightPoints);
  ctx.shadowColor=color;ctx.shadowBlur=12;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
- drawContour(leftPoints);drawContour(rightPoints);
- ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
+ drawSmooth(leftPoints);drawSmooth(rightPoints);
+ ctx.globalAlpha=.35;ctx.shadowBlur=20;
+ drawSmooth(leftPoints);drawSmooth(rightPoints);
+ ctx.globalAlpha=1;ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
 }
 function startReactivePreview(){
  const player=$('player');
