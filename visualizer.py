@@ -112,11 +112,25 @@ def _paint_cover(frame, cover, kick, resized_cache):
     artwork = resized_cache[side]
     left = (SIZE[0] - side) // 2
     top = (SIZE[1] - side) // 2
+    # Glow is rendered before the artwork so the inside of the photo stays
+    # sharp; only the area just outside the frame receives soft bloom.
+    halo_pad = 23
+    halo_side = side + halo_pad * 2
+    glow_mask = Image.new("L", (halo_side, halo_side), 0)
+    glow_draw = ImageDraw.Draw(glow_mask)
+    glow_draw.rectangle((halo_pad, halo_pad, halo_pad + side - 1,
+                         halo_pad + side - 1), outline=225, width=4)
+    outer = glow_mask.filter(ImageFilter.GaussianBlur(9))
+    tight = glow_mask.filter(ImageFilter.GaussianBlur(3))
+    halo = ImageChops.add(outer.point(lambda a: round(a * .82)),
+                          tight.point(lambda a: round(a * .66)))
+    halo_color = Image.new("RGB", (halo_side, halo_side), (255, 247, 252))
+    frame.paste(halo_color, (left - halo_pad, top - halo_pad), halo)
+
     frame.paste(artwork, (left, top))
-    # Subtle bright frame remains attached to the beat-bouncing image.
     border = ImageDraw.Draw(frame)
     border.rectangle((left, top, left + side - 1, top + side - 1),
-                     outline=(247, 246, 250), width=2)
+                     outline=(255, 253, 255), width=2)
     return (left, top, left + side, top + side)
 
 
@@ -190,12 +204,13 @@ def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
         lambda v: round(v * .37)))
     shadow = ImageChops.offset(shadow, 2, 3)
 
+    # Two brighter translucent halos, preserving the thin anti-aliased core.
     glow = Image.new("RGBA", layer.size, (*rgb, 0))
-    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(7)).point(
-        lambda v: round(v * .68)))
+    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(6)).point(
+        lambda v: round(v * .90)))
     bloom = Image.new("RGBA", layer.size, (*rgb, 0))
-    bloom.putalpha(alpha.filter(ImageFilter.GaussianBlur(12)).point(
-        lambda v: round(v * .17)))
+    bloom.putalpha(alpha.filter(ImageFilter.GaussianBlur(13)).point(
+        lambda v: round(v * .37)))
 
     combined = Image.alpha_composite(shadow, bloom)
     combined = Image.alpha_composite(combined, glow)
@@ -220,17 +235,33 @@ def _apply_color_overlay(frame, color, opacity):
 
 
 def _ziv_watermark():
-    """Load the supplied ZIV graphic as a semi-transparent, glowing logo."""
+    """Create ZIV logo with brighter illuminated lettering and drop shadow."""
     if not ZIV_LOGO.exists():
         raise FileNotFoundError(f"Missing ZIV logo asset: {ZIV_LOGO}")
     with Image.open(ZIV_LOGO) as raw:
         logo = raw.convert("RGBA")
     logo.thumbnail((166, 94), Image.Resampling.LANCZOS)
-    # Keep a crisp white original on top of a subtle purple halo.
-    glow = Image.new("RGBA", logo.size, (176, 102, 216, 0))
-    glow.putalpha(logo.getchannel("A").filter(
-        ImageFilter.GaussianBlur(7)).point(lambda a: round(a * .65)))
-    return Image.alpha_composite(glow, logo)
+    # Padding prevents clipping the outer bloom at the edges of the logo.
+    pad = 25
+    size = (logo.width + pad * 2, logo.height + pad * 2)
+    layer = Image.new("RGBA", size, (0, 0, 0, 0))
+    layer.alpha_composite(logo, (pad, pad))
+    alpha = layer.getchannel("A")
+
+    shadow = Image.new("RGBA", size, (5, 3, 13, 0))
+    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(5)).point(
+        lambda a: round(a * .74)))
+    shadow = ImageChops.offset(shadow, 3, 4)
+
+    wide = Image.new("RGBA", size, (193, 120, 247, 0))
+    wide.putalpha(alpha.filter(ImageFilter.GaussianBlur(13)).point(
+        lambda a: round(a * .92)))
+    close = Image.new("RGBA", size, (255, 245, 255, 0))
+    close.putalpha(alpha.filter(ImageFilter.GaussianBlur(5)).point(
+        lambda a: round(a * .83)))
+
+    return Image.alpha_composite(
+        Image.alpha_composite(Image.alpha_composite(shadow, wide), close), layer)
 
 
 def _paint_ziv(frame, watermark):
