@@ -131,3 +131,7 @@ The new workflow is **local-first**, with no per-image/song API bills. Storage, 
 ### Status / migration
 
 Previous locally saved songs and compilations remain in SQLite; migration only adds columns and new tables. Old completed compilations are still downloadable. Existing channels, generated songs and older template artwork files are not deleted. Current implementation is committed but requires end-to-end testing on your Windows PC with ACE-Step, Ollama and Forge.
+
+## Audio Visualizer (uploaded music + square artwork)
+
+In the **Audio Visualizer** dashboard tab, upload a finished MP3/WAV/FLAC/M4A/OGG and a PNG/JPEG/WEBP picture, set waveform color and sensitivity, then click **Create Visualizer MP4**. The app center-crops the picture to a 540px square over a blurred 1280x720 background and renders left/right audio-reactive spikes at 30fps. Results are saved in `data/visualizers/outputs/` and are downloadable from the dashboard. FFmpeg must be on PATH and Pillow installed from `requirements.txt`. Rendering happens locally and can take several minutes for a full song; only one visualizer render runs at a time. Jobs are in memory and disappear from the dashboard when Flask restarts, but completed MP4 files remain on disk. Use audio and artwork you are permitted to publish.
