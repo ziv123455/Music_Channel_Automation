@@ -154,10 +154,10 @@ def _extract_file(obj):
 
 def _download_result_file(tools, song_id):
     # Studio stores its audio on the same Windows computer as Flask.
-    files = _call(tools, "library_song_files", {"song_id": song_id})
+    files = _call(tools, "library_song_files", {"song_id": song_id, "id": song_id})
     source = _extract_file(files)
     if not source:
-        detail = _call(tools, "library_song_get", {"song_id": song_id})
+        detail = _call(tools, "library_song_get", {"song_id": song_id, "id": song_id})
         source = _extract_file(detail)
     if not source:
         raise RuntimeError("Song generated in MiniMax Studio but its audio path "
@@ -188,7 +188,7 @@ def generate_one(description, genre, duration, instrumental, target, title,
     completed = not bool(job_id)
     while job_id and time.monotonic() < deadline:
         time.sleep(8)
-        job = _call(tools, "song_job_get", {"job_id": job_id})
+        job = _call(tools, "song_job_get", {"job_id": job_id, "id": job_id})
         state = _state(job)
         if on_progress:
             on_progress("MiniMax Music 3: " + (state or "generating") +
