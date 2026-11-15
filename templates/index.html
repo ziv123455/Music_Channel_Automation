@@ -149,8 +149,8 @@ function startReactivePreview(){
    for(let i=0;i<64;i++)full+=bins[i];
    const low=sum/10/255;
    const broad=full/64/255;
-   smoothBeat+=(low>smoothBeat?.32:.10)*(low-smoothBeat);
-   smoothWave+=(broad>smoothWave?.30:.14)*(broad-smoothWave);
+   smoothBeat+=(low > smoothBeat ? 0.32 : 0.10)*(low-smoothBeat);
+   smoothWave+=(broad > smoothWave ? 0.30 : 0.14)*(broad-smoothWave);
    spikes(Math.min(1,smoothBeat*1.6),Math.min(1,smoothWave*1.7),performance.now()/40);
    frameRequest=requestAnimationFrame(tick);
  }
