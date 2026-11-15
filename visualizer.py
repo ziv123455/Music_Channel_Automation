@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 import uuid
+import zipfile
 
 from flask import Blueprint, jsonify, request, send_from_directory
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageChops
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 BASE = ROOT / "data" / "visualizers"
 OUTPUTS = BASE / "outputs"
 INPUTS = BASE / "uploads"
+ZIV_LOGO = ROOT / "assets" / "ziv-logo.webp"
 for folder in (INPUTS, OUTPUTS):
     folder.mkdir(parents=True, exist_ok=True)
 
@@ -217,14 +219,55 @@ def _apply_color_overlay(frame, color, opacity):
     return Image.blend(frame, Image.new("RGB", frame.size, rgb), opacity / 100.0)
 
 
+def _ziv_watermark():
+    """Load the supplied ZIV graphic as a semi-transparent, glowing logo."""
+    if not ZIV_LOGO.exists():
+        raise FileNotFoundError(f"Missing ZIV logo asset: {ZIV_LOGO}")
+    with Image.open(ZIV_LOGO) as raw:
+        logo = raw.convert("RGBA")
+    logo.thumbnail((166, 94), Image.Resampling.LANCZOS)
+    # Keep a crisp white original on top of a subtle purple halo.
+    glow = Image.new("RGBA", logo.size, (176, 102, 216, 0))
+    glow.putalpha(logo.getchannel("A").filter(
+        ImageFilter.GaussianBlur(7)).point(lambda a: round(a * .65)))
+    return Image.alpha_composite(glow, logo)
+
+
+def _paint_ziv(frame, watermark):
+    """A fixed upper-right watermark that doesn't obscure the centered artwork."""
+    x = SIZE[0] - watermark.width - 34
+    y = 23
+    frame.paste(watermark, (x, y), watermark)
+
+
+def _create_thumbnail(background, artwork, overlay_color, overlay_opacity, path):
+    """Still cover matching the video composition, minus logo and waves."""
+    thumbnail = _drifting_background(background, 0)
+    _paint_cover(thumbnail, artwork, 0, {})
+    thumbnail = _apply_color_overlay(thumbnail, overlay_color, overlay_opacity)
+    thumbnail.save(path, format="JPEG", quality=95, subsampling=0, optimize=True)
+
+
+def _make_bundle(output_mp4, thumbnail_jpg, target_zip):
+    """One browser download, containing both deliverables."""
+    with zipfile.ZipFile(target_zip, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.write(output_mp4, arcname="music-video.mp4")
+        archive.write(thumbnail_jpg, arcname="thumbnail.jpg")
+
+
 def _render(job_id, sound, image, title, color, sensitivity, crop,
             overlay_color="#000000", overlay_opacity=0.0):
     job = JOBS[job_id]
     output = OUTPUTS / (job_id + ".mp4")
+    thumbnail_path = OUTPUTS / (job_id + "-thumbnail.jpg")
+    bundle_path = OUTPUTS / (job_id + "-bundle.zip")
     process = None
     try:
         levels = _decode_levels(sound)
         base, cover = _background(image, color, crop)
+        # The still uses the same crop, background and tint as the export.
+        _create_thumbnail(base, cover, overlay_color, overlay_opacity, thumbnail_path)
+        watermark = _ziv_watermark()
         resized_cache = {}
         frames = len(levels)
         process = subprocess.Popen(
@@ -245,6 +288,7 @@ def _render(job_id, sound, image, title, color, sensitivity, crop,
             rect = _paint_cover(frame, cover, kick, resized_cache)
             previous = previous * 0.58 + level * 0.42
             _draw_reactive_border(frame, rect, color, previous, kick, sensitivity, index)
+            _paint_ziv(frame, watermark)
             frame = _apply_color_overlay(frame, overlay_color, overlay_opacity)
             try:
                 process.stdin.write(frame.tobytes())
@@ -255,14 +299,21 @@ def _render(job_id, sound, image, title, color, sensitivity, crop,
         process.stdin.close()
         if process.wait() != 0:
             raise RuntimeError("FFmpeg failed to encode the MP4.")
+        _make_bundle(output, thumbnail_path, bundle_path)
         job.update(status="completed", progress=100,
-                   url=f"/api/visualizers/{job_id}/download", filename=output.name)
+                   url=f"/api/visualizers/{job_id}/download",
+                   mp4_url=f"/api/visualizers/{job_id}/download/mp4",
+                   thumbnail_url=f"/api/visualizers/{job_id}/download/thumbnail",
+                   filename=output.name, thumbnail_file=thumbnail_path.name,
+                   bundle_file=bundle_path.name)
     except Exception as exc:
         job.update(status="failed", error=str(exc)[:500])
         if process is not None and process.poll() is None:
             process.kill()
             process.wait()
         output.unlink(missing_ok=True)
+        thumbnail_path.unlink(missing_ok=True)
+        bundle_path.unlink(missing_ok=True)
     finally:
         sound.unlink(missing_ok=True)
         image.unlink(missing_ok=True)
@@ -350,8 +401,27 @@ def get_visualizer(job_id):
 
 @bp.get("/api/visualizers/<job_id>/download")
 def download_visualizer(job_id):
+    """Primary download includes both MP4 and clean thumbnail in one ZIP."""
+    job = JOBS.get(job_id)
+    if not job or job.get("status") != "completed":
+        return jsonify(error="Video not ready."), 404
+    return send_from_directory(OUTPUTS, job["bundle_file"], as_attachment=True,
+                               download_name=(job["title"] or "Visualizer")[:80] + ".zip")
+
+
+@bp.get("/api/visualizers/<job_id>/download/mp4")
+def download_mp4(job_id):
     job = JOBS.get(job_id)
     if not job or job.get("status") != "completed":
         return jsonify(error="Video not ready."), 404
     return send_from_directory(OUTPUTS, job["filename"], as_attachment=True,
                                download_name=(job["title"] or "Visualizer")[:80] + ".mp4")
+
+
+@bp.get("/api/visualizers/<job_id>/download/thumbnail")
+def download_thumbnail(job_id):
+    job = JOBS.get(job_id)
+    if not job or job.get("status") != "completed":
+        return jsonify(error="Thumbnail not ready."), 404
+    return send_from_directory(OUTPUTS, job["thumbnail_file"], as_attachment=True,
+                               download_name=(job["title"] or "Visualizer")[:80] + "-thumbnail.jpg")
