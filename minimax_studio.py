@@ -19,8 +19,7 @@ MAX_WAIT_SECONDS = 7200
 
 def _rpc(method, params=None, timeout=30):
     data = {"jsonrpc": "2.0", "id": 1, "method": method,
-            "params": params if params is not None else {},
-            "_meta": {"protocolVersion": "2025-11-25"}}
+            "params": {**(params or {}), "_meta": {"protocolVersion": "2025-11-25"}}}
     with requests.post(BASE, json=data, timeout=timeout,
                        headers={"Accept": "application/json, text/event-stream",
                                 "Content-Type": "application/json",
@@ -174,7 +173,7 @@ def generate_one(description, genre, duration, instrumental, target, title,
     caption = _caption(description, genre, instrumental)
     lyrics = "[intro]\n\n[instrumental]\n\n[bridge]\n\n[instrumental]\n\n[outro]" if instrumental else ""
     args = {"title": title, "caption": caption, "lyrics": lyrics,
-            "duration_seconds": duration, "instrumental": instrumental}
+            "cover_prompt": "", "duration_seconds": duration, "instrumental": instrumental}
     if "song_prompt_check" in tools:
         # Check when supported; studio may refuse prompts that exceed its limits.
         _call(tools, "song_prompt_check", args)
@@ -186,6 +185,7 @@ def generate_one(description, genre, duration, instrumental, target, title,
     if not job_id and not song_id:
         raise RuntimeError("Studio did not return a song or job ID: " + str(created)[:500])
     deadline = time.monotonic() + MAX_WAIT_SECONDS
+    completed = not bool(job_id)
     while job_id and time.monotonic() < deadline:
         time.sleep(8)
         job = _call(tools, "song_job_get", {"job_id": job_id})
@@ -196,13 +196,14 @@ def generate_one(description, genre, duration, instrumental, target, title,
         if state in ("error", "failed", "cancelled", "canceled"):
             raise RuntimeError("MiniMax generation failed: " + str(job)[:600])
         if state in ("done", "completed", "complete", "succeeded", "success", "finished"):
+            completed = True
             song_id = _find(job, "song_id", "songId") or song_id
             if not song_id:
                 ids = _find(job, "song_ids", "songIds")
                 if isinstance(ids, list) and ids:
                     song_id = ids[0]
             break
-    if job_id and not song_id:
+    if job_id and not completed:
         raise TimeoutError("MiniMax generation is still running. Studio job ID: " + str(job_id))
     if not song_id:
         raise RuntimeError("MiniMax job completed without a song ID: " + str(job)[:500])
