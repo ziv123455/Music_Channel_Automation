@@ -85,8 +85,30 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <button class="tab active" data-tab="generate">Music Generation</button>
 <button class="tab" data-tab="library">Song Library</button><button class="tab" data-tab="mp3s">Finished MP3s</button><button class="tab" data-tab="editor">Video Editor</button><button class="tab" data-tab="mixes">Compilations</button>
 <button class="tab" data-tab="thumbnail">Thumbnail Studio</button>
+<button class="tab" data-tab="visualizer">Audio Visualizer</button>
 <button class="tab" data-tab="accounts">Account Manager</button>
 </nav>
+
+<div class="tabpane" id="pane-visualizer">
+<section class="panel">
+<h2>Audio-Reactive Cover Visualizer</h2>
+<p class="muted">Upload an existing song and picture to make a 1280 x 720 YouTube MP4. The image is center-cropped to a square, a blurred version fills the background, and glowing-edge-style white/pastel spikes pulse with the audio. No AI music generation required.</p>
+<form id="visualizerForm">
+<div class="grid">
+<div><label for="vzAudio">Song (MP3, WAV, FLAC, M4A, OGG)</label><input id="vzAudio" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg" required></div>
+<div><label for="vzImage">Artwork (JPG, PNG, WEBP)</label><input id="vzImage" type="file" accept="image/png,image/jpeg,image/webp" required></div>
+<div><label for="vzTitle">Video title / filename</label><input id="vzTitle" type="text" maxlength="100" value="Hardstyle Visualizer"></div>
+<div><label for="vzColor">Spikes color</label><input id="vzColor" type="color" value="#ffe9df" style="width:100%;height:42px"></div>
+<div><label for="vzSensitivity">Spike sensitivity <span id="vzSenseLabel">1.0x</span></label><input id="vzSensitivity" type="range" min="0.2" max="2" step="0.1" value="1" style="width:100%"></div>
+</div>
+<div style="max-width:430px;margin-top:15px"><img id="vzPreview" alt="Centered square artwork preview" style="display:none;width:100%;aspect-ratio:1;object-fit:cover;border:2px solid #ffe9df;border-radius:8px"></div>
+<p><button id="vzStart" type="submit">Create Visualizer MP4</button></p>
+<p id="vzStatus" class="muted" role="status">Ready to upload your song and artwork.</p>
+<progress id="vzProgress" value="0" max="100" style="width:100%;display:none"></progress>
+<p><a id="vzDownload" style="display:none;color:#d6b9ff" href="#" download>Download finished MP4</a></p>
+</form>
+</section>
+</div>
 
 <div class="tabpane active" id="pane-generate">
 <section class="panel">
@@ -808,6 +830,44 @@ $('imageAiForm').onsubmit=async e=>{
  selectedThumbId=j.id;savedThumbnail=j.filename;$('thumbPreview').src=j.url;$('thumbPreview').style.display='block';$('imageAiMessage').textContent='New AI thumbnail saved to library. Select it for your compilation.';await loadGallery();await refresh()}
  catch(e){$('imageAiMessage').textContent=e.message}finally{$('aiThumbButton').disabled=false}
 };
+
+
+(function initVisualizer(){
+const audio=$('vzAudio'), image=$('vzImage'), button=$('vzStart'), status=$('vzStatus'), bar=$('vzProgress'), link=$('vzDownload'), preview=$('vzPreview');
+let previewUrl;
+image.addEventListener('change',()=>{
+ if(previewUrl)URL.revokeObjectURL(previewUrl);
+ if(image.files[0]){previewUrl=URL.createObjectURL(image.files[0]);preview.src=previewUrl;preview.style.display='block'}
+ else {preview.style.display='none'}
+});
+$('vzSensitivity').addEventListener('input',()=>{$('vzSenseLabel').textContent=Number($('vzSensitivity').value).toFixed(1)+'x'});
+$('visualizerForm').addEventListener('submit',async event=>{
+ event.preventDefault();
+ if(!audio.files[0]||!image.files[0])return;
+ button.disabled=true;bar.style.display='block';bar.value=0;link.style.display='none';status.textContent='Uploading and starting render...';
+ const data=new FormData();
+ data.append('audio',audio.files[0]);data.append('image',image.files[0]);
+ data.append('title',$('vzTitle').value);data.append('color',$('vzColor').value);
+ data.append('sensitivity',$('vzSensitivity').value);
+ try {
+   const res=await fetch('/api/visualizers',{method:'POST',body:data});
+   const job=await res.json();if(!res.ok)throw Error(job.error||'Upload failed');
+   const id=job.job_id;
+   for(;;){
+     await new Promise(resolve=>setTimeout(resolve,1800));
+     const r=await fetch('/api/visualizers/'+encodeURIComponent(id));
+     const j=await r.json();if(!r.ok)throw Error(j.error||'Could not read render progress');
+     bar.value=j.progress||0;status.textContent='Rendering video: '+(j.progress||0)+'%';
+     if(j.status==='failed')throw Error(j.error||'Render failed');
+     if(j.status==='completed'){
+       status.textContent='Video ready! Download the MP4 below.';
+       link.href=j.url;link.style.display='inline-block';break;
+     }
+   }
+ }catch(err){status.textContent='Visualizer error: '+err.message}
+ finally{button.disabled=false}
+});
+})();
 
 read('/health').then(h=>$('health').textContent=h.ffmpeg&&h.ffprobe?'✓ FFmpeg ready':'Install FFmpeg');
 loadAccounts().catch(e=>alert('Failed to load accounts: '+e.message));connections();setInterval(showJobs,5000);
