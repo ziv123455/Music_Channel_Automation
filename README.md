@@ -40,3 +40,9 @@ The moving backdrop now uses a milder Gaussian blur (radius 22 rather than 38), 
 ## Waveform edge clipping and full-video tint
 
 The glowing side waveforms are masked out inside the animated cover rectangle, including a 2px safety margin, so their glow/shadow cannot leak over the picture at the edge. The browser preview uses the same outside-only clipping. Settings now include an overlay color picker and a 0–100% opacity slider. The preview displays the tint immediately; the MP4 renderer applies it as the last compositing step to the entire frame (background, central image, border, and waves). An opacity of 0 preserves the original image. Auto-sync scripts remain unchanged.
+
+## ZIV watermark and matching thumbnail downloads
+
+The uploaded ZIV logo is stored as a transparent image in `assets/ziv-logo.webp` and displayed near the upper-right corner of exported MP4s and the live preview. Its gentle glow keeps it readable without covering the center photo. The existing color overlay tints the entire finished video, including the watermark.
+
+Every completed render now also saves a **1280×720 JPG thumbnail** featuring the chosen square image and its white outline over the blurred background, with the same tint setting. The thumbnail intentionally excludes the audio waves and watermark. Clicking **Download video + thumbnail (.zip)** retrieves a single ZIP containing `music-video.mp4` and `thumbnail.jpg`; separate MP4-only and JPG-only download links are available under it. Both assets remain in `data/visualizers/outputs/` after rendering. The previous auto-sync launchers and scripts remain intact.
