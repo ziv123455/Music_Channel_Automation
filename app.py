@@ -8,6 +8,7 @@ from channel_features import bp as channel_blueprint, initialize as initialize_c
 from compilation_pipeline import bp as pipeline_blueprint, init as initialize_pipeline, configure_render, create_draft
 from finished_media import bp as finished_media_blueprint, initialize as initialize_finished_media
 from video_metadata import bp as video_metadata_blueprint, initialize as initialize_video_metadata
+from visualizer import bp as visualizer_blueprint
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -42,6 +43,7 @@ initialize_finished_media()
 app.register_blueprint(finished_media_blueprint)
 initialize_video_metadata()
 app.register_blueprint(video_metadata_blueprint)
+app.register_blueprint(visualizer_blueprint)
 
 def probe(path):
     output = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], text=True)
