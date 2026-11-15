@@ -99,6 +99,10 @@ def _paint_cover(frame, cover, kick, resized_cache):
     left = (SIZE[0] - side) // 2
     top = (SIZE[1] - side) // 2
     frame.paste(artwork, (left, top))
+    # Subtle bright frame remains attached to the beat-bouncing image.
+    border = ImageDraw.Draw(frame)
+    border.rectangle((left, top, left + side - 1, top + side - 1),
+                     outline=(247, 246, 250), width=2)
     return (left, top, left + side, top + side)
 
 
