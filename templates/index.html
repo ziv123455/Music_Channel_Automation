@@ -91,11 +91,11 @@ a{color:#c7a9ff}.wide{width:100%}.small{font-size:12px}.thumb{width:100%;max-wid
 <div class="tabpane active" id="pane-generate">
 <section class="panel">
 <h2>AI Music Generation</h2>
-<div class="grid"><div id="aceStatus" class="status muted">Checking ACE-Step...</div><div id="ollamaStatus" class="status muted">Checking Ollama...</div></div>
-<div class="muted">ACE-Step at 127.0.0.1:8001 generates audio. Optional Ollama at 127.0.0.1:11434 generates a unique creative prompt for every song.</div>
+<div class="grid"><div id="aceStatus" class="status muted">Checking ACE-Step...</div><div id="minimaxStatus" class="status muted">Checking MiniMax Studio...</div><div id="ollamaStatus" class="status muted">Checking Ollama...</div></div>
+<div class="muted">Choose ACE-Step or MiniMax Music 3 for each batch. MiniMax Studio must stay open on your PC (local port 8765). Ollama is optional. For imported-MP3 Create Similar, select ACE-Step.</div>
 <form id="generateForm">
 <div class="grid">
-<div><label for="genre">Genre / style</label><input id="genre" value="Classical" maxlength="80"></div>
+<div><label for="musicEngine">Music generation engine</label><select id="musicEngine"><option value="ace">ACE-Step 1.5</option><option value="minimax">MiniMax Music 3 Studio (local)</option></select></div><div><label for="genre">Genre / style</label><input id="genre" value="Classical" maxlength="80"></div>
 <div><label for="count">Number of songs</label><input id="count" type="number" min="1" max="10" value="10"></div>
 <div><label for="duration">Target song length (seconds)</label><input id="duration" type="number" min="30" max="600" value="360"></div>
 <div><label for="vocalMode">Music type</label><select id="vocalMode"><option value="instrumental">Instrumental</option><option value="vocals">Vocals</option></select></div>
@@ -289,6 +289,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(b=>b.onclick=()=>{
 });
 async function connections(){
  try{const j=await read('/generation/connection');$('aceStatus').className='status '+(j.connected?'good':'warning');$('aceStatus').textContent=j.connected?'✓ ACE-Step connected':'ACE-Step disconnected: '+esc(j.error)}catch(e){$('aceStatus').textContent=e.message}
+ try{const j=await read('/minimax/status');$('minimaxStatus').className='status '+(j.connected&&j.generation_available?'good':'warning');$('minimaxStatus').textContent=j.connected?(j.generation_available?'✓ MiniMax Music 3 Studio connected':'MiniMax is running but music generation tools are unavailable'):'MiniMax Studio offline — open the desktop app';}catch(e){$('minimaxStatus').textContent=e.message}
  try{const j=await read('/prompt-ai/status');$('ollamaStatus').className='status '+(j.connected&&j.model_ready?'good':'warning');$('ollamaStatus').textContent=j.connected?(j.model_ready?'✓ Ollama ready: '+j.model:'Ollama running; install model '+j.model):'Ollama offline - install and run local model'}catch(e){$('ollamaStatus').textContent=e.message}
 }
 $('checkConnections').onclick=connections;
@@ -300,7 +301,7 @@ $('similarReferenceMode').onchange=()=>{$('similarCoverOptions').style.display=$
 $('similarCoverStrength').oninput=()=>{$('similarCoverValue').textContent=Math.round(Number($('similarCoverStrength').value)*100)+'%'};
 $('generateForm').onsubmit=async e=>{
  e.preventDefault();$('generateBtn').disabled=true;
- try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,reference_song_id:similarSongId,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value,reference_mode:$('similarReferenceMode').value,cover_strength:Number($('similarCoverStrength').value)});await showJobs()}catch(e){alert(e.message)}
+ try{await post('/generate',{account_id:activeAccount,genre:$('genre').value,count:Number($('count').value),duration:Number($('duration').value),instrumental:$('vocalMode').value==='instrumental',title_prefix:$('prefix').value,prompt:$('musicPrompt').value,reference_song_id:similarSongId,auto_prompts:$('autoPrompts').checked,auto_compile:$('autoCompilation').checked,compilation_title:$('compilationTitle').value,engine:$('musicEngine').value,reference_mode:$('similarReferenceMode').value,cover_strength:Number($('similarCoverStrength').value)});await showJobs()}catch(e){alert(e.message)}
  finally{$('generateBtn').disabled=false}
 };
 const seenFinishedCompilations=new Set();
@@ -325,7 +326,7 @@ async function refresh(){
  document.querySelectorAll('.trackPick').forEach(i=>i.onchange=e=>{const id=e.target.value;if(e.target.checked){if(!selectedTrackIds.includes(id))selectedTrackIds.push(id)}else{selectedTrackIds=selectedTrackIds.filter(x=>x!==id)}updateSelection()});updateSelection();
  document.querySelectorAll('.similarTrack').forEach(b=>b.onclick=()=>{
    const s=lib.find(item=>item.id===b.dataset.id);if(!s)return;
-   similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
+   $('musicEngine').value='ace';similarSongId=s.id;$('duration').value=Math.min(600,Math.max(30,Math.round(s.duration||360)));
    $('musicPrompt').value='Match the EXACT music style of '+s.title+': same genre, characteristic instruments, groove, tempo feel, energy, sound design and overall atmosphere. Create a new original composition in this same style.';
    $('autoPrompts').checked=false;$('similarSource').style.display='block';
    $('similarAudioOptions').style.display='block';$('similarReferenceMode').value='style';$('similarReferenceMode').onchange();
