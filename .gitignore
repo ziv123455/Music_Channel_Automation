@@ -5,3 +5,12 @@ venv/
 data/
 .env
 *.log
+tools/
+checkpoints/
+models/
+outputs/
+node_modules/
+*.mp3
+*.wav
+*.mp4
+*.flac
