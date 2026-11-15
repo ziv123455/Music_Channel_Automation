@@ -81,7 +81,7 @@ def _background(image_path, color, crop):
         # Render a slightly oversized backdrop once, then pan a 1280x720
         # viewing window over it. This adds motion without reblurring frames.
         background = ImageOps.fit(image, (1408, 792), method=Image.Resampling.LANCZOS)
-    background = background.filter(ImageFilter.GaussianBlur(38))
+    background = background.filter(ImageFilter.GaussianBlur(22))
     background = ImageEnhance.Brightness(background).enhance(.40)
     background = ImageEnhance.Color(background).enhance(.88)
     return background, artwork
@@ -136,53 +136,64 @@ def _chaikin_smooth(points, iterations=3):
 
 
 def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
-    """Silky continuous left/right audio contours with restrained halo and shadow."""
+    """Draw antialiased flowing contours, inset from the square's corners."""
     left, top, right, bottom = box
-    height = max(1, bottom - top)
+    height = bottom - top
+    if height <= 70:
+        return
+
     rgb = tuple(int(color[k:k + 2], 16) for k in (1, 3, 5))
     activity = max(0.0, min(1.0, level * .80 + kick * .35))
-    padding = 170
-    x0 = max(0, int(left - padding))
-    y0 = max(0, int(top - 20))
-    x1 = min(SIZE[0], int(right + padding))
-    y1 = min(SIZE[1], int(bottom + 20))
-    layer = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
-    ink = ImageDraw.Draw(layer)
-    left_points = []
-    right_points = []
+    pad = 165
+    margin = 30  # Keep the effect away from the top and bottom corners.
+    x0 = max(0, int(left - pad))
+    y0 = max(0, int(top + margin - 12))
+    x1 = min(SIZE[0], int(right + pad))
+    y1 = min(SIZE[1], int(bottom - margin + 12))
+    width, layer_height = x1 - x0, y1 - y0
 
-    # Lower frequency lobes avoid the repeated sharp zigzags of the old wave.
-    for pixel_y in range(0, height + 2, 2):
-        y = min(height, pixel_y)
-        t = y / height
-        taper = max(0.0, min(1.0, t * 14, (1 - t) * 14))
+    # Supersample only the transparent waveform overlay, not the entire video.
+    # Downsampling with LANCZOS removes stairsteps from thin diagonal sections.
+    aa = 2
+    layer = Image.new("RGBA", (width * aa, layer_height * aa), (0, 0, 0, 0))
+    ink = ImageDraw.Draw(layer)
+    left_points, right_points = [], []
+    span = height - 2 * margin
+
+    for local_y in range(span + 1):
+        y = margin + local_y
+        t = local_y / span
+        # Smoothly taper both ends right into the box edge without extending
+        # a curve into the image's top/bottom corner.
+        fade = min(1.0, t * 9.0, (1.0 - t) * 9.0)
+        fade = max(0.0, fade)
+        fade = fade * fade * (3.0 - 2.0 * fade)
         lobes = (
-            .55 * ((1 + math.sin(t * math.pi * 6.0 + index * .045)) / 2) ** 3
-            + .30 * ((1 + math.sin(t * math.pi * 11.0 - index * .060)) / 2) ** 4
-            + .15 * ((1 + math.sin(t * math.pi * 18.0 + index * .080)) / 2) ** 5
+            .56 * ((1.0 + math.sin(t * math.pi * 6.0 + index * .043)) / 2.0) ** 2
+            + .29 * ((1.0 + math.sin(t * math.pi * 10.0 - index * .052)) / 2.0) ** 3
+            + .15 * ((1.0 + math.sin(t * math.pi * 16.0 + index * .070)) / 2.0) ** 3
         )
-        length = taper * (5 + 100 * sensitivity * activity * (.20 + .80 * lobes))
-        yy = top + y - y0
-        left_points.append((left - length - x0, yy))
-        right_points.append((right + length - x0, yy))
+        reach = fade * (4.0 + 94.0 * sensitivity * activity * (.22 + .78 * lobes))
+        yy = (top + y - y0) * aa
+        left_points.append(((left - reach - x0) * aa, yy))
+        right_points.append(((right + reach - x0) * aa, yy))
 
     for points in (left_points, right_points):
-        smoothed = _chaikin_smooth(points, iterations=3)
-        ink.line(smoothed, fill=(*rgb, 255), width=2, joint="curve")
+        ink.line(points, fill=(*rgb, 255), width=aa * 2, joint="curve")
 
+    layer = layer.resize((width, layer_height), Image.Resampling.LANCZOS)
     alpha = layer.getchannel("A")
-    shadow = Image.new("RGBA", layer.size, (10, 6, 16, 0))
-    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(6)).point(
-        lambda value: round(value * .42)))
+    shadow = Image.new("RGBA", layer.size, (9, 6, 15, 0))
+    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(5)).point(
+        lambda v: round(v * .37)))
     shadow = ImageChops.offset(shadow, 2, 3)
 
     glow = Image.new("RGBA", layer.size, (*rgb, 0))
-    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(8)).point(
-        lambda value: round(value * .72)))
-
+    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(7)).point(
+        lambda v: round(v * .68)))
     bloom = Image.new("RGBA", layer.size, (*rgb, 0))
-    bloom.putalpha(alpha.filter(ImageFilter.GaussianBlur(14)).point(
-        lambda value: round(value * .22)))
+    bloom.putalpha(alpha.filter(ImageFilter.GaussianBlur(12)).point(
+        lambda v: round(v * .17)))
 
     combined = Image.alpha_composite(shadow, bloom)
     combined = Image.alpha_composite(combined, glow)
