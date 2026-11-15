@@ -102,56 +102,75 @@ def _paint_cover(frame, cover, kick, resized_cache):
     return (left, top, left + side, top + side)
 
 
+def _chaikin_smooth(points, iterations=3):
+    """Round corners without changing the first or last waveform point."""
+    if len(points) < 3:
+        return list(points)
+    result = list(points)
+    for _ in range(iterations):
+        smoother = [result[0]]
+        for first, second in zip(result, result[1:]):
+            x1, y1 = first
+            x2, y2 = second
+            smoother.append((.75*x1 + .25*x2, .75*y1 + .25*y2))
+            smoother.append((.25*x1 + .75*x2, .25*y1 + .75*y2))
+        smoother.append(result[-1])
+        result = smoother
+    return result
+
+
 def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
-    """Draw two smooth glowing waveform contours, never horizontal equalizer bars."""
+    """Silky continuous left/right audio contours with restrained halo and shadow."""
     left, top, right, bottom = box
-    height = bottom - top
+    height = max(1, bottom - top)
     rgb = tuple(int(color[k:k + 2], 16) for k in (1, 3, 5))
-    activity = max(0.0, min(1.0, level * .85 + kick * .4))
-    padding = 165
+    activity = max(0.0, min(1.0, level * .80 + kick * .35))
+    padding = 170
     x0 = max(0, int(left - padding))
-    y0 = max(0, int(top - 18))
+    y0 = max(0, int(top - 20))
     x1 = min(SIZE[0], int(right + padding))
-    y1 = min(SIZE[1], int(bottom + 18))
-    layer = Image.new("RGBA", (x1-x0, y1-y0), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
+    y1 = min(SIZE[1], int(bottom + 20))
+    layer = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
+    ink = ImageDraw.Draw(layer)
     left_points = []
     right_points = []
 
-    # Each Y position gets one smoothly varying contour offset. Long, low-
-    # frequency lobes plus subtle higher-frequency details create organic
-    # waveform peaks without the comb-like appearance of separate bars.
-    step = 3
-    for pixel_y in range(0, height + step, step):
+    # Lower frequency lobes avoid the repeated sharp zigzags of the old wave.
+    for pixel_y in range(0, height + 2, 2):
         y = min(height, pixel_y)
         t = y / height
-        # Fade to zero at the endpoints to avoid top/bottom connecting bars.
-        taper = min(1.0, t * 19, (1.0 - t) * 19)
+        taper = max(0.0, min(1.0, t * 14, (1 - t) * 14))
         lobes = (
-            .43 * ((1 + math.sin(t * math.pi * 8.5 + index * .062)) / 2) ** 5
-            + .35 * ((1 + math.sin(t * math.pi * 16.5 - index * .083)) / 2) ** 7
-            + .22 * ((1 + math.sin(t * math.pi * 32 + index * .12)) / 2) ** 8
+            .55 * ((1 + math.sin(t * math.pi * 6.0 + index * .045)) / 2) ** 3
+            + .30 * ((1 + math.sin(t * math.pi * 11.0 - index * .060)) / 2) ** 4
+            + .15 * ((1 + math.sin(t * math.pi * 18.0 + index * .080)) / 2) ** 5
         )
-        length = taper * (6 + 117 * sensitivity * activity * (.15 + .85 * lobes))
+        length = taper * (5 + 100 * sensitivity * activity * (.20 + .80 * lobes))
         yy = top + y - y0
-        left_points.append((round(left - length - x0), round(yy)))
-        right_points.append((round(right + length - x0), round(yy)))
+        left_points.append((left - length - x0, yy))
+        right_points.append((right + length - x0, yy))
 
-    # Make a thin, continuous, bright path and composite glow separately.
-    d.line(left_points, fill=(*rgb, 255), width=2, joint="curve")
-    d.line(right_points, fill=(*rgb, 255), width=2, joint="curve")
+    for points in (left_points, right_points):
+        smoothed = _chaikin_smooth(points, iterations=3)
+        ink.line(smoothed, fill=(*rgb, 255), width=2, joint="curve")
 
     alpha = layer.getchannel("A")
     shadow = Image.new("RGBA", layer.size, (10, 6, 16, 0))
-    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(5)).point(
-        lambda value: round(value * .50)))
+    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(6)).point(
+        lambda value: round(value * .42)))
     shadow = ImageChops.offset(shadow, 2, 3)
 
     glow = Image.new("RGBA", layer.size, (*rgb, 0))
-    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(6.5)).point(
-        lambda value: round(value * .78)))
+    glow.putalpha(alpha.filter(ImageFilter.GaussianBlur(8)).point(
+        lambda value: round(value * .72)))
 
-    combined = Image.alpha_composite(Image.alpha_composite(shadow, glow), layer)
+    bloom = Image.new("RGBA", layer.size, (*rgb, 0))
+    bloom.putalpha(alpha.filter(ImageFilter.GaussianBlur(14)).point(
+        lambda value: round(value * .22)))
+
+    combined = Image.alpha_composite(shadow, bloom)
+    combined = Image.alpha_composite(combined, glow)
+    combined = Image.alpha_composite(combined, layer)
     frame.paste(combined.convert("RGB"), (x0, y0), combined.getchannel("A"))
 
 
