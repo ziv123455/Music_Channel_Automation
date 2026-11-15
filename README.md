@@ -16,3 +16,7 @@ Install Python 3.11+ and FFmpeg on PATH. Run start.bat (or start-all.bat). Open 
 MP4 exports are in data/visualizers/outputs. Only one render runs at a time. The job state clears when Flask restarts but completed MP4 files remain on disk. Only upload songs and pictures you have rights to publish.
 
 The original full software has been preserved in GitHub branch backup-before-visualizer-only-reset-2026-11-15.
+
+## Beat bounce and interactive square crop
+
+After selecting a picture, drag inside the square crop editor to choose the exact part of the original artwork. The Zoom slider lets you crop more closely. The preview and rendered MP4 use the same source coordinates. During rendering, kick-band (low-pass) audio energy makes the square artwork pulse subtly (up to 6.5% larger); the edge spikes still respond to the full song. The app and existing Git auto-sync scripts remain separate.
