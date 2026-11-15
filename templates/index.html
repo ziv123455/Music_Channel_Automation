@@ -37,7 +37,7 @@ button:disabled{opacity:.5;cursor:wait}
 <canvas id="cropCanvas" width="800" height="800" aria-label="Drag image to select square crop"></canvas>
 <label for="cropZoom">Zoom: <span id="zoomValue">1.0x</span></label>
 <input id="cropZoom" type="range" min="1" max="3" step=".05" value="1">
-<div class="crop-hint">The square preview and final exported video use this exact crop.</div>
+<div class="crop-hint">The square preview and final exported video use this exact crop. Avoid zooming deeply into a small source image.</div>
 </div>
 <label for="title">3. Video title</label><input id="title" type="text" value="Hardstyle Song" maxlength="100">
 <label for="color">Waveform color</label><input id="color" type="color" value="#ffe9df">
@@ -48,7 +48,7 @@ button:disabled{opacity:.5;cursor:wait}
 </form><p><small>Output: 1280 x 720, 30 FPS, high-quality encoding. For the sharpest results, upload a high-resolution image (ideally 1000px+ square).</small></p></section>
 <section class="panel"><h2>Cover preview</h2>
 <div class="stage"><img id="back" alt=""><img id="art" alt=""><canvas id="spikes" width="1280" height="720"></canvas><div id="hint">Upload a picture to preview your square cover</div></div>
-<p><small>Play the uploaded song to preview the square bouncing with the bass and the waveform moving around all four sides of its border. The exported video uses a higher-quality resize.</small></p>
+<p><small>Play the uploaded song to preview the square bouncing with the bass and the waveform moving around all four sides of its border. For sharp artwork, use the original high-resolution photo instead of a screenshot or thumbnail.</small></p>
 <audio id="player" controls style="display:none;width:100%"></audio>
 </section></div></main>
 <script>
@@ -102,30 +102,35 @@ cropCanvas.addEventListener('pointercancel',stopCropDrag);
 cropCanvas.addEventListener('lostpointercapture',stopCropDrag);
 let analyser=null, audioContext=null, sourceNode=null, frameRequest=0, smoothBeat=0, smoothWave=0;
 function spikes(beat=0,wave=.42,time=0){
- const c=$('spikes'),ctx=c.getContext('2d');
+ const canvas=$('spikes'),ctx=canvas.getContext('2d');
  const sensitivity=Number($('sensitivity').value);
  ctx.clearRect(0,0,1280,720);
- ctx.strokeStyle=$('color').value;
- ctx.shadowColor=$('color').value;ctx.shadowBlur=6;ctx.lineWidth=2;
- const side=540*(1+.055*beat);
+ const side=540*(1+.045*beat);
  const left=(1280-side)/2,top=(720-side)/2,right=left+side,bottom=top+side;
- $('art').style.setProperty('--beat-scale',String(1+.055*beat));
+ $('art').style.setProperty('--beat-scale',String(1+.045*beat));
+
+ // Consistent, thin equalizer bars around the moving cover, like the reference.
+ ctx.strokeStyle=$('color').value;
+ ctx.lineWidth=2;
+ ctx.shadowColor=$('color').value;
+ ctx.shadowBlur=9;
+ ctx.shadowOffsetX=2;ctx.shadowOffsetY=2;
  ctx.strokeRect(left-1,top-1,side+2,side+2);
- for(let i=0;i<84;i++){
-   const t=(i+.5)/84;
-   const yy=top+t*side,xx=left+t*side;
-   const grain=(.5+.5*Math.sin(i*.87+time*.115))**2;
-   const ripple=(.5+.5*Math.sin(i*.43-time*.092))**2;
-   const amp=Math.min(1,wave*.78+beat*.34);
-   const length=3+94*sensitivity*amp*(.17+.83*(.55*grain+.45*ripple));
+ const amp=Math.min(1,wave*.8+beat*.35);
+ for(let i=0;i<118;i++){
+   const t=(i+.5)/118, yy=top+t*side,xx=left+t*side;
+   const v=(.5+.5*Math.sin(t*Math.PI*17+time*.19))**2;
+   const q=(.5+.5*Math.sin(i*.69-time*.10))**2;
+   const length=3+80*sensitivity*amp*(.23+.77*(.62*v+.38*q));
+   const topLen=2+62*sensitivity*amp*(.2+.8*(.65*(.5+.5*Math.sin(i*.58+time*.17))**2+.35*(.5+.5*Math.sin(i*.19-time*.065))**2));
    ctx.beginPath();
    ctx.moveTo(left,yy);ctx.lineTo(left-length,yy);
    ctx.moveTo(right,yy);ctx.lineTo(right+length,yy);
-   const topLen=2+54*sensitivity*amp*(.15+.85*(.5+.5*Math.sin(i*.72-time*.11))**2);
    ctx.moveTo(xx,top);ctx.lineTo(xx,top-topLen);
    ctx.moveTo(xx,bottom);ctx.lineTo(xx,bottom+topLen);
    ctx.stroke();
  }
+ ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
 }
 function startReactivePreview(){
  const player=$('player');
