@@ -46,3 +46,7 @@ The glowing side waveforms are masked out inside the animated cover rectangle, i
 The uploaded ZIV logo is stored as a transparent image in `assets/ziv-logo.webp` and displayed near the upper-right corner of exported MP4s and the live preview. Its gentle glow keeps it readable without covering the center photo. The existing color overlay tints the entire finished video, including the watermark.
 
 Every completed render now also saves a **1280×720 JPG thumbnail** featuring the chosen square image and its white outline over the blurred background, with the same tint setting. The thumbnail intentionally excludes the audio waves and watermark. Clicking **Download video + thumbnail (.zip)** retrieves a single ZIP containing `music-video.mp4` and `thumbnail.jpg`; separate MP4-only and JPG-only download links are available under it. Both assets remain in `data/visualizers/outputs/` after rendering. The previous auto-sync launchers and scripts remain intact.
+
+## Stronger neon finishing effects
+
+The ZIV watermark now has a stronger white/purple light bloom plus an offset dark shadow. The thin center-photo border uses a bright white core with two blurred glow layers, applied before the artwork is pasted to preserve sharpness. Left/right wave contours have brighter wide and tight glow, but their current edge clipping and their corner taper remain in place. The live browser preview uses corresponding CSS/canvas effects. The thumbnail continues to omit the watermark and waveform, but retains the illuminated image border.
