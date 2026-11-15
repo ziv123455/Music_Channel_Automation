@@ -9,7 +9,7 @@ import threading
 import uuid
 
 from flask import Blueprint, jsonify, request, send_from_directory
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageChops
 
 bp = Blueprint("visualizer", __name__)
 ROOT = Path(__file__).resolve().parent
@@ -153,6 +153,8 @@ def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
     glow = layer.filter(ImageFilter.GaussianBlur(5.0))
     glow.putalpha(glow.getchannel("A").point(lambda a: int(a * .48)))
     origin = (x0, y0)
+    # A 2px offset gives the border a restrained depth cue.
+    black = ImageChops.offset(black, 2, 3)
     effect = Image.alpha_composite(Image.alpha_composite(black, glow), layer)
     frame.paste(effect.convert("RGB"), origin, effect.getchannel("A"))
 
