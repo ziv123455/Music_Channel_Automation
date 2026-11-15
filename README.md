@@ -20,3 +20,7 @@ The original full software has been preserved in GitHub branch backup-before-vis
 ## Beat bounce and interactive square crop
 
 After selecting a picture, drag inside the square crop editor to choose the exact part of the original artwork. The Zoom slider lets you crop more closely. The preview and rendered MP4 use the same source coordinates. During rendering, kick-band (low-pass) audio energy makes the square artwork pulse subtly (up to 6.5% larger); the edge spikes still respond to the full song. The app and existing Git auto-sync scripts remain separate.
+
+## Responsive perimeter waveform and image quality
+
+The waveform now traces all four moving edges of the bass-bouncing square, rather than staying anchored to the old static box. The image renderer keeps the original selected crop at full source resolution, caches high-quality LANCZOS-resized bounce sizes, uses improved H.264 export quality (CRF 17), and previews the chosen crop on an 800px canvas. The audio player provides an animated in-browser preview when playing. Low-resolution uploaded pictures can still look blurry if zoomed too far; start with a square image of at least 1000 pixels when available. The original Git auto-sync scripts remain untouched.
