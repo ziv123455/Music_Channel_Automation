@@ -32,3 +32,7 @@ The visualizer draws two continuously connected, smoothly varying sound-wave out
 ## Gentle moving background
 
 The blurred source image now has a slow ambient horizontal/vertical drift behind the centered artwork. The renderer builds an oversized, dark, blurred backdrop once, then smoothly pans a 1280x720 crop over it without exposing empty edges. The live preview uses a matching slow CSS animation. The central cover, smooth left/right waveform, crop controls and auto-sync scripts are unchanged.
+
+## Refined background and waveform edges
+
+The moving backdrop now uses a milder Gaussian blur (radius 22 rather than 38), while the browser preview uses 12px instead of 22px. MP4 wave contours are drawn at 2x resolution then downsampled with LANCZOS to suppress jagged pixels. The left and right waves now begin and end 30px away from the square's top/bottom corners, using smooth eased tapers; no top or bottom waves are added. The white picture border, beat bounce, drag-to-crop and auto-sync are preserved.
