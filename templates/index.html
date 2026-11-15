@@ -13,7 +13,7 @@ input[type=range]{width:100%;accent-color:#dd97ee}button{width:100%;margin-top:2
 button:disabled{opacity:.5;cursor:wait}
 .stage{width:100%;aspect-ratio:16/9;background:#16131e;border-radius:12px;position:relative;overflow:hidden}
 .stage img{display:none;position:absolute}#back{inset:-8%;height:116%;width:116%;object-fit:cover;filter:blur(22px) brightness(.43)}
-#art{width:42.1875%;aspect-ratio:1;object-fit:cover;top:50%;left:50%;transform:translate(-50%,-50%);border:2px solid #ffe9df}
+#art{width:42.1875%;aspect-ratio:1;object-fit:cover;top:50%;left:50%;transform:translate(-50%,-50%) scale(var(--beat-scale,1));border:2px solid #ffe9df;image-rendering:auto;backface-visibility:hidden;will-change:transform;box-shadow:0 8px 35px #0009}
 #spikes{position:absolute;inset:0;width:100%;height:100%}
 #hint{position:absolute;inset:0;display:grid;place-items:center;color:#b1a7bf;font-size:14px}
 .crop-editor{margin-top:12px;padding:12px;background:#15141e;border:1px solid #524e67;border-radius:12px}
@@ -34,7 +34,7 @@ button:disabled{opacity:.5;cursor:wait}
 <div class="crop-editor" id="cropPanel" style="display:none">
 <label style="margin-top:0">Choose the square crop</label>
 <p>Drag the picture inside the square to position your artwork. Use Zoom to include more or less of the image.</p>
-<canvas id="cropCanvas" width="400" height="400" aria-label="Drag image to select square crop"></canvas>
+<canvas id="cropCanvas" width="800" height="800" aria-label="Drag image to select square crop"></canvas>
 <label for="cropZoom">Zoom: <span id="zoomValue">1.0x</span></label>
 <input id="cropZoom" type="range" min="1" max="3" step=".05" value="1">
 <div class="crop-hint">The square preview and final exported video use this exact crop.</div>
@@ -45,10 +45,10 @@ button:disabled{opacity:.5;cursor:wait}
 <button id="create" type="submit">Create MP4 Visualizer</button>
 <progress id="progress" max="100" value="0"></progress><p id="msg" role="status">Ready to create your video.</p>
 <a id="download" href="#">Download MP4</a>
-</form><p><small>Output: 1280 x 720, 30 FPS. Rendering is local and free. Requires FFmpeg.</small></p></section>
+</form><p><small>Output: 1280 x 720, 30 FPS, high-quality encoding. For the sharpest results, upload a high-resolution image (ideally 1000px+ square).</small></p></section>
 <section class="panel"><h2>Cover preview</h2>
 <div class="stage"><img id="back" alt=""><img id="art" alt=""><canvas id="spikes" width="1280" height="720"></canvas><div id="hint">Upload a picture to preview your square cover</div></div>
-<p><small>The exported cover gently bounces with bass kicks. This preview shows your chosen crop and a sample waveform shape.</small></p>
+<p><small>Play the uploaded song to preview the square bouncing with the bass and the waveform moving around all four sides of its border. The exported video uses a higher-quality resize.</small></p>
 <audio id="player" controls style="display:none;width:100%"></audio>
 </section></div></main>
 <script>
@@ -59,8 +59,10 @@ const cropCanvas=$('cropCanvas'),cropCtx=cropCanvas.getContext('2d');
 function bound(v,low,high){return Math.max(low,Math.min(high,v));}
 function cropPreview(){
  if(!crop.source)return;
- cropCtx.clearRect(0,0,400,400);
- cropCtx.drawImage(crop.source,crop.x,crop.y,crop.side,crop.side,0,0,400,400);
+ cropCtx.imageSmoothingEnabled=true;
+ cropCtx.imageSmoothingQuality="high";
+ cropCtx.clearRect(0,0,800,800);
+ cropCtx.drawImage(crop.source,crop.x,crop.y,crop.side,crop.side,0,0,800,800);
  $('art').src=cropCanvas.toDataURL('image/png');
  $('art').style.display='block';
  $('hint').style.display='none';
@@ -98,8 +100,64 @@ function stopCropDrag(){drag=null;cropCanvas.classList.remove('dragging')}
 cropCanvas.addEventListener('pointerup',stopCropDrag);
 cropCanvas.addEventListener('pointercancel',stopCropDrag);
 cropCanvas.addEventListener('lostpointercapture',stopCropDrag);
-function spikes(){const c=$('spikes'),ctx=c.getContext('2d'),scale=Number($('sensitivity').value);ctx.clearRect(0,0,1280,720);ctx.strokeStyle=$('color').value;ctx.lineWidth=2;ctx.shadowColor=$('color').value;ctx.shadowBlur=7;
-for(let i=0;i<84;i++){const y=90+(i+.5)*540/84;const length=5+Math.round(75*(.5+.5*Math.sin(i*.73))*(.5+.5*Math.sin(i*1.47))*scale);ctx.beginPath();ctx.moveTo(370,y);ctx.lineTo(370-length,y);ctx.moveTo(910,y);ctx.lineTo(910+length,y);ctx.stroke();}}
+let analyser=null, audioContext=null, sourceNode=null, frameRequest=0, smoothBeat=0, smoothWave=0;
+function spikes(beat=0,wave=.42,time=0){
+ const c=$('spikes'),ctx=c.getContext('2d');
+ const sensitivity=Number($('sensitivity').value);
+ ctx.clearRect(0,0,1280,720);
+ ctx.strokeStyle=$('color').value;
+ ctx.shadowColor=$('color').value;ctx.shadowBlur=6;ctx.lineWidth=2;
+ const side=540*(1+.055*beat);
+ const left=(1280-side)/2,top=(720-side)/2,right=left+side,bottom=top+side;
+ $('art').style.setProperty('--beat-scale',String(1+.055*beat));
+ ctx.strokeRect(left-1,top-1,side+2,side+2);
+ for(let i=0;i<84;i++){
+   const t=(i+.5)/84;
+   const yy=top+t*side,xx=left+t*side;
+   const grain=(.5+.5*Math.sin(i*.87+time*.115))**2;
+   const ripple=(.5+.5*Math.sin(i*.43-time*.092))**2;
+   const amp=Math.min(1,wave*.78+beat*.34);
+   const length=3+94*sensitivity*amp*(.17+.83*(.55*grain+.45*ripple));
+   ctx.beginPath();
+   ctx.moveTo(left,yy);ctx.lineTo(left-length,yy);
+   ctx.moveTo(right,yy);ctx.lineTo(right+length,yy);
+   const topLen=2+54*sensitivity*amp*(.15+.85*(.5+.5*Math.sin(i*.72-time*.11))**2);
+   ctx.moveTo(xx,top);ctx.lineTo(xx,top-topLen);
+   ctx.moveTo(xx,bottom);ctx.lineTo(xx,bottom+topLen);
+   ctx.stroke();
+ }
+}
+function startReactivePreview(){
+ const player=$('player');
+ try{
+   if(!audioContext){
+     const AudioClass=window.AudioContext||window.webkitAudioContext;
+     audioContext=new AudioClass();
+     analyser=audioContext.createAnalyser();analyser.fftSize=2048;
+     sourceNode=audioContext.createMediaElementSource(player);
+     sourceNode.connect(analyser);analyser.connect(audioContext.destination);
+   }
+   audioContext.resume();
+ }catch(err){console.warn('Audio-reactive preview unavailable:',err);return}
+ if(frameRequest)return;
+ const bins=new Uint8Array(analyser.frequencyBinCount);
+ function tick(){
+   if(player.paused){frameRequest=0;spikes();return}
+   analyser.getByteFrequencyData(bins);
+   let sum=0,full=0;
+   for(let i=0;i<10;i++)sum+=bins[i];
+   for(let i=0;i<64;i++)full+=bins[i];
+   const low=sum/10/255;
+   const broad=full/64/255;
+   smoothBeat+=(low>smoothBeat?.32:.10)*(low-smoothBeat);
+   smoothWave+=(broad>smoothWave?.30:.14)*(broad-smoothWave);
+   spikes(Math.min(1,smoothBeat*1.6),Math.min(1,smoothWave*1.7),performance.now()/40);
+   frameRequest=requestAnimationFrame(tick);
+ }
+ frameRequest=requestAnimationFrame(tick);
+}
+$('player').addEventListener('play',startReactivePreview);
+$('player').addEventListener('pause',()=>{if(frameRequest){cancelAnimationFrame(frameRequest);frameRequest=0}smoothBeat=0;spikes()});
 $('image').addEventListener('change',()=>{
  if(imageUrl)URL.revokeObjectURL(imageUrl);
  const f=$('image').files[0];
