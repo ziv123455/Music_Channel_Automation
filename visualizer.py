@@ -10,6 +10,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request, send_from_directory
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+import io
 
 bp = Blueprint("visualizer", __name__)
 ROOT = Path(__file__).resolve().parent
@@ -25,56 +26,87 @@ SIZE = (1280, 720)
 FPS = 30
 
 
-def _decode_levels(path, fps=FPS):
-    """Decode a low-rate mono copy and measure short-time peak envelopes."""
-    result = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1",
-         "-ar", "11025", "-f", "s16le", "-"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
-    )
+def _read_peaks(path, filter_audio=False, fps=FPS):
+    """Read amplitude envelopes from decoded audio (low-pass for kicks)."""
+    command = ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1",
+               "-ar", "11025"]
+    if filter_audio:
+        command.extend(["-af", "lowpass=f=170"])
+    command.extend(["-f", "s16le", "-"])
+    result = subprocess.run(command, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, check=True)
     pcm = array("h")
     pcm.frombytes(result.stdout)
     if not pcm:
-        raise ValueError("This audio file has no sound.")
+        raise ValueError("Audio is empty or unsupported.")
     chunk = max(1, round(11025 / fps))
-    levels = []
-    for start in range(0, len(pcm), chunk):
-        samples = pcm[start:start + chunk]
-        peak = max((abs(value) for value in samples), default=0) / 32768.0
-        levels.append(peak)
-    # Transients pulse; quiet sections retain subtle motion.
-    smooth = 0.0
-    shaped = []
-    for level in levels:
-        target = min(1.0, (level * 2.1) ** 0.65)
-        smooth = (0.62 if target > smooth else 0.82) * smooth + (
-            0.38 if target > smooth else 0.18) * target
-        shaped.append(smooth)
-    return shaped
+    return [max((abs(v) for v in pcm[i:i + chunk]), default=0) / 32768.0
+            for i in range(0, len(pcm), chunk)]
 
 
-def _background(image_path, color):
-    w, h = SIZE
-    with Image.open(image_path) as image:
-        image = ImageOps.exif_transpose(image).convert("RGB")
+def _decode_levels(path):
+    """Full spectrum drives spikes; kick-band transients drive image bounce."""
+    peaks = _read_peaks(path)
+    bass = _read_peaks(path, filter_audio=True)
+    # Running background level helps kicks produce *pulses*, not a permanently enlarged image.
+    full_smoothed = 0.0
+    bass_baseline = 0.0
+    kick_smoothed = 0.0
+    result = []
+    for raw, low in zip(peaks, bass):
+        full_target = min(1.0, (raw * 2.1) ** 0.65)
+        full_rate = 0.38 if full_target > full_smoothed else 0.18
+        full_smoothed += full_rate * (full_target - full_smoothed)
+        bass_baseline += 0.035 * (low - bass_baseline)
+        transient = max(0.0, low - bass_baseline * 0.72)
+        target_kick = min(1.0, transient * 9.0)
+        # Fast attack and slower decay for a clean scale bounce.
+        rate = 0.65 if target_kick > kick_smoothed else 0.16
+        kick_smoothed += rate * (target_kick - kick_smoothed)
+        result.append((full_smoothed, kick_smoothed))
+    return result
+
+
+def _background(image_path, color, crop):
+    """Build a dark blurred background and the user's precise square crop."""
+    with Image.open(image_path) as raw:
+        image = ImageOps.exif_transpose(raw).convert("RGB")
+        w, h = image.size
+        min_side = min(w, h)
+        x_fraction, y_fraction, size_fraction = crop
+        side = max(1, min(min_side, int(round(size_fraction * min_side))))
+        x = max(0, min(w - side, int(round(x_fraction * w))))
+        y = max(0, min(h - side, int(round(y_fraction * h))))
+        artwork = image.crop((x, y, x + side, y + side))
+        cover = artwork.resize((540, 540), Image.Resampling.LANCZOS)
         background = ImageOps.fit(image, SIZE, method=Image.Resampling.LANCZOS)
-        background = background.filter(ImageFilter.GaussianBlur(38))
-        background = ImageEnhance.Brightness(background).enhance(0.47)
-        cover = ImageOps.fit(image, (540, 540), method=Image.Resampling.LANCZOS)
-    x, y = (w - 540) // 2, (h - 540) // 2
-    background.paste(cover, (x, y))
-    d = ImageDraw.Draw(background)
-    d.rectangle((x-1, y-1, x+540, y+540), outline=color, width=2)
-    return background, (x, y, x+540, y+540)
+    background = background.filter(ImageFilter.GaussianBlur(38))
+    background = ImageEnhance.Brightness(background).enhance(0.47)
+    return background, cover, (370, 90, 910, 630)
 
 
-def _render(job_id, sound, image, title, color, sensitivity):
+def _paint_cover(frame, cover, color, kick):
+    """Composite square art on each frame, gently expanding with the bass beat."""
+    side = int(round(540 * (1.0 + 0.065 * kick)))
+    if side != 540:
+        artwork = cover.resize((side, side), Image.Resampling.BILINEAR)
+    else:
+        artwork = cover
+    x = (SIZE[0] - side) // 2
+    y = (SIZE[1] - side) // 2
+    frame.paste(artwork, (x, y))
+    border = ImageDraw.Draw(frame)
+    border.rectangle((x - 1, y - 1, x + side, y + side),
+                     outline=color, width=2)
+
+
+def _render(job_id, sound, image, title, color, sensitivity, crop):
     job = JOBS[job_id]
     output = OUTPUTS / (job_id + ".mp4")
     process = None
     try:
         levels = _decode_levels(sound)
-        base, (left, top, right, bottom) = _background(image, color)
+        base, cover, (left, top, right, bottom) = _background(image, color, crop)
         frames = len(levels)
         # Keep every spike within the blurred margin around the square.
         max_spike = 110
@@ -91,10 +123,11 @@ def _render(job_id, sound, image, title, color, sensitivity):
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         previous = 0.0
-        for index, level in enumerate(levels):
+        for index, (level, kick) in enumerate(levels):
             if process.poll() is not None:
                 raise RuntimeError("FFmpeg exited while rendering.")
             frame = base.copy()
+            _paint_cover(frame, cover, color, kick)
             draw = ImageDraw.Draw(frame)
             previous = previous * 0.64 + level * 0.36
             for pos in range(spike_count):
@@ -151,6 +184,13 @@ def create_visualizer():
                 ch not in "0123456789abcdefABCDEF" for ch in color[1:]):
             raise ValueError("Invalid waveform color.")
         sensitivity = float(request.form.get("sensitivity", 1))
+        crop_x = float(request.form.get("crop_x", 0))
+        crop_y = float(request.form.get("crop_y", 0))
+        crop_size = float(request.form.get("crop_size", 1))
+        if not all(math.isfinite(v) for v in (crop_x, crop_y, crop_size)):
+            raise ValueError("Invalid crop coordinates.")
+        if not (0 <= crop_x <= 1 and 0 <= crop_y <= 1 and 0 < crop_size <= 1):
+            raise ValueError("Crop must be inside the source image.")
         if not 0.2 <= sensitivity <= 2:
             raise ValueError("Sensitivity must be between 0.2 and 2.")
     except (ValueError, TypeError) as exc:
@@ -174,7 +214,8 @@ def create_visualizer():
 
         def work():
             try:
-                _render(job_id, sound_path, image_path, job["title"], color, sensitivity)
+                _render(job_id, sound_path, image_path, job["title"], color, sensitivity,
+                        (crop_x, crop_y, crop_size))
             finally:
                 LOCK.release()
 
