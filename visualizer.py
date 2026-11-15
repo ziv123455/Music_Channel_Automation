@@ -198,10 +198,27 @@ def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
     combined = Image.alpha_composite(shadow, bloom)
     combined = Image.alpha_composite(combined, glow)
     combined = Image.alpha_composite(combined, layer)
-    frame.paste(combined.convert("RGB"), (x0, y0), combined.getchannel("A"))
+    # Hard-clip the glow, shadow, and line outside the bouncing cover.
+    # A two-pixel safety inset prevents faint halo seams at the image edge.
+    mask = combined.getchannel("A")
+    cut = Image.new("L", combined.size, 255)
+    cut_draw = ImageDraw.Draw(cut)
+    cut_draw.rectangle((left - x0 - 2, top - y0 - 2,
+                        right - x0 + 2, bottom - y0 + 2), fill=0)
+    mask = ImageChops.multiply(mask, cut)
+    frame.paste(combined.convert("RGB"), (x0, y0), mask)
 
 
-def _render(job_id, sound, image, title, color, sensitivity, crop):
+def _apply_color_overlay(frame, color, opacity):
+    """Tint the entire finished composition; opacity is a percentage 0..100."""
+    if opacity <= 0:
+        return frame
+    rgb = tuple(int(color[k:k + 2], 16) for k in (1, 3, 5))
+    return Image.blend(frame, Image.new("RGB", frame.size, rgb), opacity / 100.0)
+
+
+def _render(job_id, sound, image, title, color, sensitivity, crop,
+            overlay_color="#000000", overlay_opacity=0.0):
     job = JOBS[job_id]
     output = OUTPUTS / (job_id + ".mp4")
     process = None
@@ -228,6 +245,7 @@ def _render(job_id, sound, image, title, color, sensitivity, crop):
             rect = _paint_cover(frame, cover, kick, resized_cache)
             previous = previous * 0.58 + level * 0.42
             _draw_reactive_border(frame, rect, color, previous, kick, sensitivity, index)
+            frame = _apply_color_overlay(frame, overlay_color, overlay_opacity)
             try:
                 process.stdin.write(frame.tobytes())
             except BrokenPipeError as exc:
@@ -270,6 +288,14 @@ def create_visualizer():
                 ch not in "0123456789abcdefABCDEF" for ch in color[1:]):
             raise ValueError("Invalid waveform color.")
         sensitivity = float(request.form.get("sensitivity", 1))
+        overlay_color = str(request.form.get("overlay_color", "#000000"))
+        if (len(overlay_color) != 7 or overlay_color[0] != "#"
+                or any(ch not in "0123456789abcdefABCDEF"
+                       for ch in overlay_color[1:])):
+            raise ValueError("Invalid overlay color.")
+        overlay_opacity = float(request.form.get("overlay_opacity", 0))
+        if not math.isfinite(overlay_opacity) or not 0 <= overlay_opacity <= 100:
+            raise ValueError("Overlay opacity must be between 0 and 100.")
         crop_x = float(request.form.get("crop_x", 0))
         crop_y = float(request.form.get("crop_y", 0))
         crop_size = float(request.form.get("crop_size", 1))
@@ -301,7 +327,7 @@ def create_visualizer():
         def work():
             try:
                 _render(job_id, sound_path, image_path, job["title"], color, sensitivity,
-                        (crop_x, crop_y, crop_size))
+                        (crop_x, crop_y, crop_size), overlay_color, overlay_opacity)
             finally:
                 LOCK.release()
 
