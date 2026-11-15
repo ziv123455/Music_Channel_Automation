@@ -22,6 +22,7 @@ for folder in (INPUTS, OUTPUTS):
 JOBS = {}
 LOCK = threading.Lock()
 SIZE = (1280, 720)
+COVER_SIZE = 540
 FPS = 30
 
 
@@ -67,7 +68,7 @@ def _decode_levels(path):
 
 
 def _background(image_path, color, crop):
-    """Keep the selected image crop sharp and use the full source for the backdrop."""
+    """Preserve the exact original crop and produce a clean darkened backdrop."""
     with Image.open(image_path) as raw:
         image = ImageOps.exif_transpose(raw).convert("RGB")
         w, h = image.size
@@ -77,20 +78,21 @@ def _background(image_path, color, crop):
         x = max(0, min(w - side, int(round(x_fraction * w))))
         y = max(0, min(h - side, int(round(y_fraction * h))))
         artwork = image.crop((x, y, x + side, y + side))
-        # ImageOps.fit and LANCZOS only once; preserve full resolution until
-        # each requested bounce size is rendered, avoiding cumulative blur.
         background = ImageOps.fit(image, SIZE, method=Image.Resampling.LANCZOS)
     background = background.filter(ImageFilter.GaussianBlur(38))
-    background = ImageEnhance.Brightness(background).enhance(0.43)
-    background = ImageEnhance.Color(background).enhance(0.90)
+    background = ImageEnhance.Brightness(background).enhance(.40)
+    background = ImageEnhance.Color(background).enhance(.88)
     return background, artwork
 
 
 def _paint_cover(frame, cover, kick, resized_cache):
-    """Return the exact animated box rectangle so the waveform follows its edge."""
-    side = int(round(540 * (1.0 + 0.055 * kick)))
+    """Scale from the original crop, never from a previously resized preview."""
+    side = round(COVER_SIZE * (1.0 + .045 * kick))
     if side not in resized_cache:
-        resized_cache[side] = cover.resize((side, side), Image.Resampling.LANCZOS)
+        # Gentle sharpening offsets resampling blur; no fake detail is added.
+        artwork = cover.resize((side, side), Image.Resampling.LANCZOS)
+        artwork = artwork.filter(ImageFilter.UnsharpMask(radius=1.1, percent=115, threshold=3))
+        resized_cache[side] = artwork
         if len(resized_cache) > 48:
             resized_cache.pop(next(iter(resized_cache)))
     artwork = resized_cache[side]
@@ -101,42 +103,62 @@ def _paint_cover(frame, cover, kick, resized_cache):
 
 
 def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
-    """Audio waves grow outward from all four edges of the bouncing image."""
+    """Crisp, closely spaced equalizer bars with soft glow and drop shadow."""
     left, top, right, bottom = box
-    draw = ImageDraw.Draw(frame, "RGB")
-    base_rgb = tuple(int(color[k:k+2], 16) for k in (1, 3, 5))
-    glow_rgb = tuple(int(v * .40) for v in base_rgb)
-    # Crisp thin frame with subtle lit surrounding outline.
-    draw.rectangle((left-3, top-3, right+2, bottom+2), outline=glow_rgb, width=5)
-    draw.rectangle((left-1, top-1, right, bottom), outline=base_rgb, width=2)
     side = right - left
-    # Use exactly the bouncing coordinates, not the original fixed 540px box.
-    n = 84
-    for k in range(n):
-        t = (k + .5) / n
-        offset = int(t * side)
-        phase = index * .115
-        grain = (.5 + .5 * math.sin(k * .87 + phase)) ** 2
-        ripple = (.5 + .5 * math.sin(k * .43 - index * .092)) ** 2
-        weight = .17 + .83 * (.55 * grain + .45 * ripple)
-        amplitude = max(0, min(1, level * .78 + kick * .34))
-        length = round(3 + 94 * sensitivity * amplitude * weight)
-        yy = top + offset
-        # Soft wide core with a crisp thin highlight (inexpensive faux glow).
-        for direction, x in ((-1, left), (1, right)):
-            draw.line((x, yy, x + direction * length, yy), fill=glow_rgb, width=5)
-            draw.line((x, yy, x + direction * length, yy), fill=base_rgb, width=2)
-    n_horizontal = 84
-    for k in range(n_horizontal):
-        t = (k + .5) / n_horizontal
-        xx = left + round(t * side)
-        grain = (.5 + .5 * math.sin(k * .72 - index * .11)) ** 2
-        weight = .15 + .85 * grain
-        amplitude = max(0, min(1, level * .72 + kick * .38))
-        length = round(2 + 54 * sensitivity * amplitude * weight)
-        for direction, y in ((-1, top), (1, bottom)):
-            draw.line((xx, y, xx, y + direction * length), fill=glow_rgb, width=4)
-            draw.line((xx, y, xx, y + direction * length), fill=base_rgb, width=2)
+    rgb = tuple(int(color[k:k + 2], 16) for k in (1, 3, 5))
+    # Make bars move as a family rather than producing jagged single long spikes.
+    activity = max(0.0, min(1.0, level * .80 + kick * .35))
+    # Render a small transparent effect layer rather than blurring the artwork.
+    pad = 130
+    bounds = (max(0, left - pad), max(0, top - pad),
+              min(SIZE[0], right + pad), min(SIZE[1], bottom + pad))
+    x0, y0, x1, y1 = bounds
+    layer = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
+    ink = ImageDraw.Draw(layer)
+
+    def rect_bar(xa, ya, xb, yb):
+        ink.rectangle((round(xa) - x0, round(ya) - y0,
+                       round(xb) - x0, round(yb) - y0),
+                      fill=(*rgb, 248))
+
+    # All lengths start on the actual moving cover perimeter.
+    # Using evenly spaced thin bars matches classic YouTube equalizer frames.
+    count = 118
+    for k in range(count):
+        t = (k + .5) / count
+        phase = (k / count) * math.pi * 17.0
+        envelope = (.5 + .5 * math.sin(phase + index * .19)) ** 2
+        secondary = (.5 + .5 * math.sin(k * .69 - index * .10)) ** 2
+        shape = .23 + .77 * (.62 * envelope + .38 * secondary)
+        length = min(108, 3 + (80 * sensitivity * activity * shape))
+        yy = top + t * side
+        rect_bar(left - length, yy - 1.1, left - 1, yy + 1.1)
+        rect_bar(right + 1, yy - 1.1, right + length, yy + 1.1)
+
+    count_horizontal = 118
+    for k in range(count_horizontal):
+        t = (k + .5) / count_horizontal
+        envelope = (.5 + .5 * math.sin(k * .58 + index * .17)) ** 2
+        secondary = (.5 + .5 * math.sin(k * .19 - index * .065)) ** 2
+        shape = .20 + .80 * (.65 * envelope + .35 * secondary)
+        length = min(80, 2 + 62 * sensitivity * activity * shape)
+        xx = left + t * side
+        rect_bar(xx - 1.1, top - length, xx + 1.1, top - 1)
+        rect_bar(xx - 1.1, bottom + 1, xx + 1.1, bottom + length)
+
+    # Two subtle layers; the offset layer acts as a drop shadow.
+    black = Image.new("RGBA", layer.size, (10, 5, 14, 0))
+    black.putalpha(layer.getchannel("A").filter(ImageFilter.GaussianBlur(4.5)).point(lambda a: int(a * .44)))
+    glow = layer.filter(ImageFilter.GaussianBlur(5.0))
+    glow.putalpha(glow.getchannel("A").point(lambda a: int(a * .48)))
+    origin = (x0, y0)
+    effect = Image.alpha_composite(Image.alpha_composite(black, glow), layer)
+    frame.paste(effect.convert("RGB"), origin, effect.getchannel("A"))
+
+    # A clean, hairline frame unifies all four equalizer edges.
+    d = ImageDraw.Draw(frame)
+    d.rectangle((left - 1, top - 1, right, bottom), outline=rgb, width=2)
 
 
 def _render(job_id, sound, image, title, color, sensitivity, crop):
