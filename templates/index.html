@@ -17,9 +17,9 @@ button:disabled{opacity:.5;cursor:wait}
 @media (prefers-reduced-motion: reduce) {
   #back { animation: none; }
 }
-#art{width:42.1875%;aspect-ratio:1;object-fit:cover;top:50%;left:50%;transform:translate(-50%,-50%) scale(var(--beat-scale,1));border:0;outline:2px solid rgba(247,246,250,.95);outline-offset:-2px;image-rendering:auto;backface-visibility:hidden;will-change:transform;box-shadow:0 8px 35px #0009}
+#art{width:42.1875%;aspect-ratio:1;object-fit:cover;top:50%;left:50%;transform:translate(-50%,-50%) scale(var(--beat-scale,1));border:0;outline:2px solid rgba(255,253,255,.99);outline-offset:-2px;image-rendering:auto;backface-visibility:hidden;will-change:transform;box-shadow:0 0 8px 2px rgba(255,245,255,.65),0 0 23px 4px rgba(255,230,250,.38),0 8px 35px #0009}
 #spikes{position:absolute;inset:0;width:100%;height:100%}
-#zivLogo{display:none;position:absolute;top:3.2%;right:2.66%;width:13%;height:auto;z-index:4;filter:drop-shadow(0 0 8px rgba(172,107,217,.6));pointer-events:none}
+#zivLogo{display:none;position:absolute;top:3.2%;right:2.66%;width:13%;height:auto;z-index:4;filter:drop-shadow(3px 4px 3px rgba(4,2,12,.95)) drop-shadow(0 0 5px rgba(255,240,255,.9)) drop-shadow(0 0 14px rgba(199,116,247,.9));pointer-events:none}
 #colorOverlay{position:absolute;inset:0;pointer-events:none;background:#000000;opacity:0;z-index:5}
 #hint{position:absolute;inset:0;display:grid;place-items:center;color:#b1a7bf;font-size:14px}
 .crop-editor{margin-top:12px;padding:12px;background:#15141e;border:1px solid #524e67;border-radius:12px}
@@ -158,9 +158,9 @@ function spikes(beat=0,wave=.42,time=0){
  ctx.shadowColor='rgba(9,6,15,.65)';ctx.shadowBlur=6;
  ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;
  drawSmooth(leftPoints);drawSmooth(rightPoints);
- ctx.shadowColor=color;ctx.shadowBlur=10;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
+ ctx.shadowColor=color;ctx.shadowBlur=12;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
  drawSmooth(leftPoints);drawSmooth(rightPoints);
- ctx.globalAlpha=.23;ctx.shadowBlur=16;
+ ctx.globalAlpha=.48;ctx.shadowBlur=22;
  drawSmooth(leftPoints);drawSmooth(rightPoints);
  ctx.globalAlpha=1;ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
  ctx.restore();
