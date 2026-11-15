@@ -12,7 +12,7 @@ input[type=color]{width:100%;height:45px;background:transparent;border:0}
 input[type=range]{width:100%;accent-color:#dd97ee}button{width:100%;margin-top:22px;background:linear-gradient(115deg,#f6a2cf,#9876fc);border:0;color:#15111a;font-weight:800;padding:14px;border-radius:11px;cursor:pointer}
 button:disabled{opacity:.5;cursor:wait}
 .stage{width:100%;aspect-ratio:16/9;background:#16131e;border-radius:12px;position:relative;overflow:hidden}
-.stage img{display:none;position:absolute}#back{inset:-10%;height:120%;width:120%;object-fit:cover;filter:blur(22px) brightness(.43);animation:background-drift 19s ease-in-out infinite alternate;will-change:transform}
+.stage img{display:none;position:absolute}#back{inset:-10%;height:120%;width:120%;object-fit:cover;filter:blur(12px) brightness(.43);animation:background-drift 19s ease-in-out infinite alternate;will-change:transform}
 @keyframes background-drift{0%{transform:translate(-1.8%,-1.1%) scale(1.03)}50%{transform:translate(1.4%,1.6%) scale(1.055)}100%{transform:translate(2%,-1.4%) scale(1.035)}}
 @media (prefers-reduced-motion: reduce) {
   #back { animation: none; }
@@ -52,7 +52,7 @@ button:disabled{opacity:.5;cursor:wait}
 </form><p><small>Output: 1280 x 720, 30 FPS, high-quality encoding. For the sharpest results, upload a high-resolution image (ideally 1000px+ square).</small></p></section>
 <section class="panel"><h2>Cover preview</h2>
 <div class="stage"><img id="back" alt=""><img id="art" alt=""><canvas id="spikes" width="1280" height="720"></canvas><div id="hint">Upload a picture to preview your square cover</div></div>
-<p><small>Play the uploaded song to preview the square bouncing with the bass and the smooth glowing waveform moving along its left and right edges. The blurred background slowly drifts behind the artwork. For sharp artwork, use the original high-resolution photo instead of a screenshot or thumbnail.</small></p>
+<p><small>Play the uploaded song to preview the square bouncing with the bass and the smooth glowing waveform moving along its left and right edges. The softer-blurred background slowly drifts behind the artwork; the waves taper 30px before the corners. For sharp artwork, use the original high-resolution photo instead of a screenshot or thumbnail.</small></p>
 <audio id="player" controls style="display:none;width:100%"></audio>
 </section></div></main>
 <script>
@@ -114,39 +114,39 @@ function spikes(beat=0,wave=.42,time=0){
  const left=(1280-side)/2,top=(720-side)/2,right=left+side;
  $('art').style.setProperty('--beat-scale',String(1+.045*beat));
  const activity=Math.min(1,wave*.80+beat*.35);
+ const margin=30,span=side-2*margin;
  const leftPoints=[],rightPoints=[];
- for(let y=0;y<side;y+=2){
-   const t=y/side;
-   const taper=Math.max(0,Math.min(1,t*14,(1-t)*14));
+ // Stop 30px short of the image corners and fade smoothly to the box edge.
+ for(let y=0;y<=span;y+=1){
+   const t=y/span;
+   let fade=Math.max(0,Math.min(1,t*9,(1-t)*9));
+   fade=fade*fade*(3-2*fade);
    const lobes=
-     .55*Math.pow((1+Math.sin(t*Math.PI*6+time*.045))/2,3)+
-     .30*Math.pow((1+Math.sin(t*Math.PI*11-time*.060))/2,4)+
-     .15*Math.pow((1+Math.sin(t*Math.PI*18+time*.080))/2,5);
-   const length=taper*(5+100*sensitivity*activity*(.20+.80*lobes));
-   leftPoints.push([left-length,top+y]);
-   rightPoints.push([right+length,top+y]);
+     .56*((1+Math.sin(t*Math.PI*6+time*.043))/2)**2+
+     .29*((1+Math.sin(t*Math.PI*10-time*.052))/2)**3+
+     .15*((1+Math.sin(t*Math.PI*16+time*.070))/2)**3;
+   const reach=fade*(4+94*sensitivity*activity*(.22+.78*lobes));
+   leftPoints.push([left-reach,top+margin+y]);
+   rightPoints.push([right+reach,top+margin+y]);
  }
- leftPoints.push([left,top+side]);rightPoints.push([right,top+side]);
  function drawSmooth(points){
    if(points.length<2)return;
-   ctx.beginPath();
-   ctx.moveTo(points[0][0],points[0][1]);
+   ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
    for(let i=1;i<points.length-1;i++){
      const midX=(points[i][0]+points[i+1][0])/2;
      const midY=(points[i][1]+points[i+1][1])/2;
      ctx.quadraticCurveTo(points[i][0],points[i][1],midX,midY);
    }
-   const last=points[points.length-1];
-   ctx.lineTo(last[0],last[1]);
-   ctx.stroke();
+   const end=points[points.length-1];ctx.lineTo(end[0],end[1]);ctx.stroke();
  }
- ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=2;ctx.strokeStyle=color;
- ctx.shadowColor='rgba(10,6,16,.7)';ctx.shadowBlur=6;
+ ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=2;
+ ctx.strokeStyle=color;
+ ctx.shadowColor='rgba(9,6,15,.65)';ctx.shadowBlur=6;
  ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;
  drawSmooth(leftPoints);drawSmooth(rightPoints);
- ctx.shadowColor=color;ctx.shadowBlur=12;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
+ ctx.shadowColor=color;ctx.shadowBlur=10;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
  drawSmooth(leftPoints);drawSmooth(rightPoints);
- ctx.globalAlpha=.35;ctx.shadowBlur=20;
+ ctx.globalAlpha=.23;ctx.shadowBlur=16;
  drawSmooth(leftPoints);drawSmooth(rightPoints);
  ctx.globalAlpha=1;ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
 }
