@@ -104,33 +104,37 @@ let analyser=null, audioContext=null, sourceNode=null, frameRequest=0, smoothBea
 function spikes(beat=0,wave=.42,time=0){
  const canvas=$('spikes'),ctx=canvas.getContext('2d');
  const sensitivity=Number($('sensitivity').value);
+ const color=$('color').value;
  ctx.clearRect(0,0,1280,720);
  const side=540*(1+.045*beat);
  const left=(1280-side)/2,top=(720-side)/2,right=left+side,bottom=top+side;
  $('art').style.setProperty('--beat-scale',String(1+.045*beat));
-
- // Consistent, thin equalizer bars around the moving cover, like the reference.
- ctx.strokeStyle=$('color').value;
- ctx.lineWidth=2;
- ctx.shadowColor=$('color').value;
- ctx.shadowBlur=9;
- ctx.shadowOffsetX=2;ctx.shadowOffsetY=2;
- ctx.strokeRect(left-1,top-1,side+2,side+2);
- const amp=Math.min(1,wave*.8+beat*.35);
- for(let i=0;i<118;i++){
-   const t=(i+.5)/118, yy=top+t*side,xx=left+t*side;
-   const v=(.5+.5*Math.sin(t*Math.PI*17+time*.19))**2;
-   const q=(.5+.5*Math.sin(i*.69-time*.10))**2;
-   const length=3+80*sensitivity*amp*(.23+.77*(.62*v+.38*q));
-   const topLen=2+62*sensitivity*amp*(.2+.8*(.65*(.5+.5*Math.sin(i*.58+time*.17))**2+.35*(.5+.5*Math.sin(i*.19-time*.065))**2));
-   ctx.beginPath();
-   ctx.moveTo(left,yy);ctx.lineTo(left-length,yy);
-   ctx.moveTo(right,yy);ctx.lineTo(right+length,yy);
-   ctx.moveTo(xx,top);ctx.lineTo(xx,top-topLen);
-   ctx.moveTo(xx,bottom);ctx.lineTo(xx,bottom+topLen);
-   ctx.stroke();
+ const activity=Math.min(1,wave*.90+beat*.35);
+ const count=95,maxLength=95*sensitivity;
+ const gap=side/count,barHeight=Math.max(2,gap*.42);
+ ctx.fillStyle=color;
+ ctx.shadowColor='rgba(16,7,24,.72)';
+ ctx.shadowOffsetX=2;ctx.shadowOffsetY=3;ctx.shadowBlur=5;
+ // First the soft halo, then the precise thin bar cores.
+ function drawBars(){
+  for(let i=0;i<count;i++){
+   const t=(i+.5)/count,y=top+t*side;
+   const w1=(Math.sin(i*.23+time*.18)+1)/2;
+   const w2=(Math.sin(i*.51-time*.11)+1)/2;
+   const shape=.35+.65*(.6*w1+.4*w2);
+   const length=Math.max(8,Math.min(maxLength,8+maxLength*activity*shape));
+   ctx.fillRect(left-length,y-barHeight/2,length-3,barHeight);
+   ctx.fillRect(right+3,y-barHeight/2,length-3,barHeight);
+  }
  }
- ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
+ drawBars();
+ ctx.shadowColor=color;
+ ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;ctx.shadowBlur=9;
+ drawBars();
+ ctx.shadowBlur=0;
+ ctx.strokeStyle=color;
+ ctx.lineWidth=2;
+ ctx.strokeRect(left-1,top-1,side+2,side+2);
 }
 function startReactivePreview(){
  const player=$('player');
