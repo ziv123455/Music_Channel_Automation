@@ -103,64 +103,51 @@ def _paint_cover(frame, cover, kick, resized_cache):
 
 
 def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
-    """Crisp, closely spaced equalizer bars with soft glow and drop shadow."""
+    """Mirrored horizontal equalizer bars only on the bouncing square's sides."""
     left, top, right, bottom = box
-    side = right - left
+    side = bottom - top
     rgb = tuple(int(color[k:k + 2], 16) for k in (1, 3, 5))
-    # Make bars move as a family rather than producing jagged single long spikes.
-    activity = max(0.0, min(1.0, level * .80 + kick * .35))
-    # Render a small transparent effect layer rather than blurring the artwork.
-    pad = 130
-    bounds = (max(0, left - pad), max(0, top - pad),
-              min(SIZE[0], right + pad), min(SIZE[1], bottom + pad))
-    x0, y0, x1, y1 = bounds
-    layer = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
-    ink = ImageDraw.Draw(layer)
+    activity = max(0.0, min(1.0, level * .90 + kick * .35))
+    count = 95
+    max_length = 95 * sensitivity
+    pad = 200
+    x0 = max(0, int(left - pad))
+    y0 = max(0, int(top - 15))
+    x1 = min(SIZE[0], int(right + pad))
+    y1 = min(SIZE[1], int(bottom + 15))
 
-    def rect_bar(xa, ya, xb, yb):
-        ink.rectangle((round(xa) - x0, round(ya) - y0,
-                       round(xb) - x0, round(yb) - y0),
-                      fill=(*rgb, 248))
+    # Draw the full bar set onto an alpha layer, leaving the cover untouched.
+    bars = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(bars)
+    gap = side / count
+    bar_height = max(2, int(gap * .42))
+    for i in range(count):
+        t = (i + .5) / count
+        yy = top + t * side - y0
+        wave1 = .5 + .5 * math.sin(i * .23 + index * .18)
+        wave2 = .5 + .5 * math.sin(i * .51 - index * .11)
+        shape = .35 + .65 * (.6 * wave1 + .4 * wave2)
+        length = max(8, min(max_length, 8 + max_length * activity * shape))
+        y1_bar = round(yy - bar_height / 2)
+        y2_bar = y1_bar + bar_height - 1
+        draw.rectangle((round(left - length) - x0, y1_bar,
+                        round(left - 3) - x0, y2_bar), fill=(*rgb, 255))
+        draw.rectangle((round(right + 3) - x0, y1_bar,
+                        round(right + length) - x0, y2_bar), fill=(*rgb, 255))
 
-    # All lengths start on the actual moving cover perimeter.
-    # Using evenly spaced thin bars matches classic YouTube equalizer frames.
-    count = 118
-    for k in range(count):
-        t = (k + .5) / count
-        phase = (k / count) * math.pi * 17.0
-        envelope = (.5 + .5 * math.sin(phase + index * .19)) ** 2
-        secondary = (.5 + .5 * math.sin(k * .69 - index * .10)) ** 2
-        shape = .23 + .77 * (.62 * envelope + .38 * secondary)
-        length = min(108, 3 + (80 * sensitivity * activity * shape))
-        yy = top + t * side
-        rect_bar(left - length, yy - 1.1, left - 1, yy + 1.1)
-        rect_bar(right + 1, yy - 1.1, right + length, yy + 1.1)
+    # Dark offset shadow and a soft tinted halo behind the crisp bars.
+    shadow = Image.new("RGBA", bars.size, (12, 7, 18, 0))
+    shadow.putalpha(bars.getchannel("A").filter(
+        ImageFilter.GaussianBlur(4.5)).point(lambda alpha: round(alpha * .38)))
+    shadow = ImageChops.offset(shadow, 2, 3)
+    glow = bars.filter(ImageFilter.GaussianBlur(5))
+    glow.putalpha(glow.getchannel("A").point(lambda alpha: round(alpha * .45)))
+    effects = Image.alpha_composite(Image.alpha_composite(shadow, glow), bars)
+    frame.paste(effects.convert("RGB"), (x0, y0), effects.getchannel("A"))
 
-    count_horizontal = 118
-    for k in range(count_horizontal):
-        t = (k + .5) / count_horizontal
-        envelope = (.5 + .5 * math.sin(k * .58 + index * .17)) ** 2
-        secondary = (.5 + .5 * math.sin(k * .19 - index * .065)) ** 2
-        shape = .20 + .80 * (.65 * envelope + .35 * secondary)
-        length = min(80, 2 + 62 * sensitivity * activity * shape)
-        xx = left + t * side
-        rect_bar(xx - 1.1, top - length, xx + 1.1, top - 1)
-        rect_bar(xx - 1.1, bottom + 1, xx + 1.1, bottom + length)
-
-    # Two subtle layers; the offset layer acts as a drop shadow.
-    black = Image.new("RGBA", layer.size, (10, 5, 14, 0))
-    black.putalpha(layer.getchannel("A").filter(ImageFilter.GaussianBlur(4.5)).point(lambda a: int(a * .44)))
-    glow = layer.filter(ImageFilter.GaussianBlur(5.0))
-    glow.putalpha(glow.getchannel("A").point(lambda a: int(a * .48)))
-    origin = (x0, y0)
-    # A 2px offset gives the border a restrained depth cue.
-    black = ImageChops.offset(black, 2, 3)
-    effect = Image.alpha_composite(Image.alpha_composite(black, glow), layer)
-    frame.paste(effect.convert("RGB"), origin, effect.getchannel("A"))
-
-    # A clean, hairline frame unifies all four equalizer edges.
-    d = ImageDraw.Draw(frame)
-    d.rectangle((left - 1, top - 1, right, bottom), outline=rgb, width=2)
+    # No top/bottom waves. A restrained frame line keeps the square defined.
+    outline = ImageDraw.Draw(frame)
+    outline.rectangle((left - 1, top - 1, right, bottom), outline=rgb, width=2)
 
 
 def _render(job_id, sound, image, title, color, sensitivity, crop):
