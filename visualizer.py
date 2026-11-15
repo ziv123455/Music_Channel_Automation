@@ -9,8 +9,8 @@ import threading
 import uuid
 
 from flask import Blueprint, jsonify, request, send_from_directory
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
-import io
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageEnhance as _ImageEnhance
+from functools import lru_cache
 
 bp = Blueprint("visualizer", __name__)
 ROOT = Path(__file__).resolve().parent
@@ -68,36 +68,76 @@ def _decode_levels(path):
 
 
 def _background(image_path, color, crop):
-    """Build a dark blurred background and the user's precise square crop."""
+    """Keep the selected image crop sharp and use the full source for the backdrop."""
     with Image.open(image_path) as raw:
         image = ImageOps.exif_transpose(raw).convert("RGB")
         w, h = image.size
-        min_side = min(w, h)
+        shorter = min(w, h)
         x_fraction, y_fraction, size_fraction = crop
-        side = max(1, min(min_side, int(round(size_fraction * min_side))))
+        side = max(1, min(shorter, int(round(size_fraction * shorter))))
         x = max(0, min(w - side, int(round(x_fraction * w))))
         y = max(0, min(h - side, int(round(y_fraction * h))))
         artwork = image.crop((x, y, x + side, y + side))
-        cover = artwork.resize((540, 540), Image.Resampling.LANCZOS)
+        # ImageOps.fit and LANCZOS only once; preserve full resolution until
+        # each requested bounce size is rendered, avoiding cumulative blur.
         background = ImageOps.fit(image, SIZE, method=Image.Resampling.LANCZOS)
     background = background.filter(ImageFilter.GaussianBlur(38))
-    background = ImageEnhance.Brightness(background).enhance(0.47)
-    return background, cover, (370, 90, 910, 630)
+    background = ImageEnhance.Brightness(background).enhance(0.43)
+    background = ImageEnhance.Color(background).enhance(0.90)
+    return background, artwork
 
 
-def _paint_cover(frame, cover, color, kick):
-    """Composite square art on each frame, gently expanding with the bass beat."""
-    side = int(round(540 * (1.0 + 0.065 * kick)))
-    if side != 540:
-        artwork = cover.resize((side, side), Image.Resampling.BILINEAR)
-    else:
-        artwork = cover
-    x = (SIZE[0] - side) // 2
-    y = (SIZE[1] - side) // 2
-    frame.paste(artwork, (x, y))
-    border = ImageDraw.Draw(frame)
-    border.rectangle((x - 1, y - 1, x + side, y + side),
-                     outline=color, width=2)
+def _paint_cover(frame, cover, kick, resized_cache):
+    """Return the exact animated box rectangle so the waveform follows its edge."""
+    side = int(round(540 * (1.0 + 0.055 * kick)))
+    if side not in resized_cache:
+        resized_cache[side] = cover.resize((side, side), Image.Resampling.LANCZOS)
+        if len(resized_cache) > 48:
+            resized_cache.pop(next(iter(resized_cache)))
+    artwork = resized_cache[side]
+    left = (SIZE[0] - side) // 2
+    top = (SIZE[1] - side) // 2
+    frame.paste(artwork, (left, top))
+    return (left, top, left + side, top + side)
+
+
+def _draw_reactive_border(frame, box, color, level, kick, sensitivity, index):
+    """Audio waves grow outward from all four edges of the bouncing image."""
+    left, top, right, bottom = box
+    draw = ImageDraw.Draw(frame, "RGB")
+    base_rgb = tuple(int(color[k:k+2], 16) for k in (1, 3, 5))
+    glow_rgb = tuple(int(v * .40) for v in base_rgb)
+    # Crisp thin frame with subtle lit surrounding outline.
+    draw.rectangle((left-3, top-3, right+2, bottom+2), outline=glow_rgb, width=5)
+    draw.rectangle((left-1, top-1, right, bottom), outline=base_rgb, width=2)
+    side = right - left
+    # Use exactly the bouncing coordinates, not the original fixed 540px box.
+    n = 84
+    for k in range(n):
+        t = (k + .5) / n
+        offset = int(t * side)
+        phase = index * .115
+        grain = (.5 + .5 * math.sin(k * .87 + phase)) ** 2
+        ripple = (.5 + .5 * math.sin(k * .43 - index * .092)) ** 2
+        weight = .17 + .83 * (.55 * grain + .45 * ripple)
+        amplitude = max(0, min(1, level * .78 + kick * .34))
+        length = round(3 + 94 * sensitivity * amplitude * weight)
+        yy = top + offset
+        # Soft wide core with a crisp thin highlight (inexpensive faux glow).
+        for direction, x in ((-1, left), (1, right)):
+            draw.line((x, yy, x + direction * length, yy), fill=glow_rgb, width=5)
+            draw.line((x, yy, x + direction * length, yy), fill=base_rgb, width=2)
+    n_horizontal = 84
+    for k in range(n_horizontal):
+        t = (k + .5) / n_horizontal
+        xx = left + round(t * side)
+        grain = (.5 + .5 * math.sin(k * .72 - index * .11)) ** 2
+        weight = .15 + .85 * grain
+        amplitude = max(0, min(1, level * .72 + kick * .38))
+        length = round(2 + 54 * sensitivity * amplitude * weight)
+        for direction, y in ((-1, top), (1, bottom)):
+            draw.line((xx, y, xx, y + direction * length), fill=glow_rgb, width=4)
+            draw.line((xx, y, xx, y + direction * length), fill=base_rgb, width=2)
 
 
 def _render(job_id, sound, image, title, color, sensitivity, crop):
@@ -106,18 +146,15 @@ def _render(job_id, sound, image, title, color, sensitivity, crop):
     process = None
     try:
         levels = _decode_levels(sound)
-        base, cover, (left, top, right, bottom) = _background(image, color, crop)
+        base, cover = _background(image, color, crop)
+        resized_cache = {}
         frames = len(levels)
-        # Keep every spike within the blurred margin around the square.
-        max_spike = 110
-        spike_count = 84
-        y_step = (bottom - top) / spike_count
         process = subprocess.Popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
              "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "1280x720",
              "-r", str(FPS), "-i", "pipe:0", "-i", str(sound),
              "-map", "0:v:0", "-map", "1:a:0",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+             "-c:v", "libx264", "-preset", "medium", "-crf", "17",
              "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k",
              "-movflags", "+faststart", "-shortest", str(output)],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -127,21 +164,9 @@ def _render(job_id, sound, image, title, color, sensitivity, crop):
             if process.poll() is not None:
                 raise RuntimeError("FFmpeg exited while rendering.")
             frame = base.copy()
-            _paint_cover(frame, cover, color, kick)
-            draw = ImageDraw.Draw(frame)
-            previous = previous * 0.64 + level * 0.36
-            for pos in range(spike_count):
-                y = round(top + (pos + 0.5) * y_step)
-                # A symmetrical, organic spectral-looking pulse at each edge.
-                phase = (pos / spike_count) * math.pi * 15
-                ripple = (0.5 + 0.5 * math.sin(phase + index * 0.19)) ** 2
-                shape = 0.25 + 0.75 * (
-                    0.5 + 0.5 * math.sin(pos * 0.73 + index * 0.05)
-                ) ** 2
-                length = 3 + int(max_spike * sensitivity * previous *
-                                 (0.23 + 0.77 * ripple) * shape)
-                draw.line([(left, y), (left - length, y)], fill=color, width=2)
-                draw.line([(right, y), (right + length, y)], fill=color, width=2)
+            rect = _paint_cover(frame, cover, kick, resized_cache)
+            previous = previous * 0.58 + level * 0.42
+            _draw_reactive_border(frame, rect, color, previous, kick, sensitivity, index)
             try:
                 process.stdin.write(frame.tobytes())
             except BrokenPipeError as exc:
