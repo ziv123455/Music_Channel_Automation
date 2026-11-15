@@ -36,3 +36,7 @@ The blurred source image now has a slow ambient horizontal/vertical drift behind
 ## Refined background and waveform edges
 
 The moving backdrop now uses a milder Gaussian blur (radius 22 rather than 38), while the browser preview uses 12px instead of 22px. MP4 wave contours are drawn at 2x resolution then downsampled with LANCZOS to suppress jagged pixels. The left and right waves now begin and end 30px away from the square's top/bottom corners, using smooth eased tapers; no top or bottom waves are added. The white picture border, beat bounce, drag-to-crop and auto-sync are preserved.
+
+## Waveform edge clipping and full-video tint
+
+The glowing side waveforms are masked out inside the animated cover rectangle, including a 2px safety margin, so their glow/shadow cannot leak over the picture at the edge. The browser preview uses the same outside-only clipping. Settings now include an overlay color picker and a 0–100% opacity slider. The preview displays the tint immediately; the MP4 renderer applies it as the last compositing step to the entire frame (background, central image, border, and waves). An opacity of 0 preserves the original image. Auto-sync scripts remain unchanged.
