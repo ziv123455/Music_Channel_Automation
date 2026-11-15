@@ -78,11 +78,23 @@ def _background(image_path, color, crop):
         x = max(0, min(w - side, int(round(x_fraction * w))))
         y = max(0, min(h - side, int(round(y_fraction * h))))
         artwork = image.crop((x, y, x + side, y + side))
-        background = ImageOps.fit(image, SIZE, method=Image.Resampling.LANCZOS)
+        # Render a slightly oversized backdrop once, then pan a 1280x720
+        # viewing window over it. This adds motion without reblurring frames.
+        background = ImageOps.fit(image, (1408, 792), method=Image.Resampling.LANCZOS)
     background = background.filter(ImageFilter.GaussianBlur(38))
     background = ImageEnhance.Brightness(background).enhance(.40)
     background = ImageEnhance.Color(background).enhance(.88)
     return background, artwork
+
+
+def _drifting_background(background, frame_number):
+    """Slow, seamless, sinusoidal Ken Burns drift with no uncovered edges."""
+    seconds = frame_number / FPS
+    # Overscan is 128px horizontal and 72px vertical.
+    # Motion stays safely away from source edges at every frame.
+    x = 64 + round(31 * math.sin(seconds * 2 * math.pi / 19))
+    y = 36 + round(16 * math.sin(seconds * 2 * math.pi / 15 + .6))
+    return background.crop((x, y, x + SIZE[0], y + SIZE[1]))
 
 
 def _paint_cover(frame, cover, kick, resized_cache):
@@ -201,7 +213,7 @@ def _render(job_id, sound, image, title, color, sensitivity, crop):
         for index, (level, kick) in enumerate(levels):
             if process.poll() is not None:
                 raise RuntimeError("FFmpeg exited while rendering.")
-            frame = base.copy()
+            frame = _drifting_background(base, index)
             rect = _paint_cover(frame, cover, kick, resized_cache)
             previous = previous * 0.58 + level * 0.42
             _draw_reactive_border(frame, rect, color, previous, kick, sensitivity, index)
